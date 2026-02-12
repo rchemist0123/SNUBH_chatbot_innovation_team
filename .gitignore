@@ -4,6 +4,7 @@ __pycache__/
 .env
 *.db
 *.sqlite3
+*.pdf
 chroma_db/
 .streamlit/secrets.toml
 venv/
