@@ -1,5 +1,7 @@
 import json
+import logging
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
@@ -12,7 +14,6 @@ from .database import Base, engine, get_db
 from .models import Chatbot, Conversation, Message, User
 from .rag import rag_pipeline
 from .schemas import (
-    ChatbotCreate,
     ChatbotResponse,
     ChatRequest,
     ChatResponse,
@@ -25,10 +26,69 @@ from .schemas import (
     UserResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Hospital RAG Chatbot API")
+
+# ──────────────────────────── Startup ────────────────────────────
+
+def _seed_chatbot():
+    """Register this service as a chatbot row and auto-ingest manuals."""
+    from .database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        chatbot = db.query(Chatbot).filter(
+            Chatbot.collection_name == settings.COLLECTION_NAME
+        ).first()
+
+        if not chatbot:
+            chatbot = Chatbot(
+                name=settings.SERVICE_NAME,
+                description=settings.SERVICE_DESCRIPTION,
+                collection_name=settings.COLLECTION_NAME,
+            )
+            db.add(chatbot)
+            db.commit()
+            db.refresh(chatbot)
+            logger.info("Chatbot registered: %s (%s)", chatbot.name, chatbot.collection_name)
+        else:
+            chatbot.name = settings.SERVICE_NAME
+            chatbot.description = settings.SERVICE_DESCRIPTION
+            db.commit()
+            logger.info("Chatbot updated: %s (%s)", chatbot.name, chatbot.collection_name)
+
+        # Auto-ingest manuals if directory exists and collection is empty
+        manuals_dir = settings.MANUALS_DIR
+        if os.path.isdir(manuals_dir):
+            pdf_files = [f for f in os.listdir(manuals_dir) if f.lower().endswith(".pdf")]
+            if pdf_files:
+                collection = rag_pipeline.chroma_client.get_or_create_collection(
+                    name=settings.COLLECTION_NAME
+                )
+                if collection.count() == 0:
+                    logger.info("Ingesting %d PDFs from %s ...", len(pdf_files), manuals_dir)
+                    total = rag_pipeline.ingest_directory(manuals_dir, settings.COLLECTION_NAME)
+                    logger.info("Ingested %d chunks.", total)
+                else:
+                    logger.info(
+                        "Collection '%s' already has %d documents, skipping ingestion.",
+                        settings.COLLECTION_NAME,
+                        collection.count(),
+                    )
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _seed_chatbot()
+    yield
+
+
+app = FastAPI(title="Hospital RAG Chatbot API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -72,16 +132,7 @@ def me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
-# ──────────────────────────── Chatbots ────────────────────────────
-
-@app.post("/api/chatbots", response_model=ChatbotResponse)
-def create_chatbot(body: ChatbotCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    chatbot = Chatbot(name=body.name, description=body.description, collection_name=body.collection_name)
-    db.add(chatbot)
-    db.commit()
-    db.refresh(chatbot)
-    return chatbot
-
+# ──────────────────────────── Chatbots (read-only) ────────────────────────────
 
 @app.get("/api/chatbots", response_model=list[ChatbotResponse])
 def list_chatbots(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
@@ -99,7 +150,7 @@ def ingest_pdfs(
     chatbot = db.query(Chatbot).filter(Chatbot.id == chatbot_id).first()
     if not chatbot:
         raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
-    manuals_dir = os.path.join(settings.MANUALS_DIR, chatbot.collection_name)
+    manuals_dir = settings.MANUALS_DIR
     if not os.path.isdir(manuals_dir):
         os.makedirs(manuals_dir, exist_ok=True)
         raise HTTPException(
@@ -123,7 +174,7 @@ def upload_pdf(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
 
-    manuals_dir = os.path.join(settings.MANUALS_DIR, chatbot.collection_name)
+    manuals_dir = settings.MANUALS_DIR
     os.makedirs(manuals_dir, exist_ok=True)
     filepath = os.path.join(manuals_dir, file.filename)
     with open(filepath, "wb") as f:
@@ -219,6 +270,13 @@ def chat(
         raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다.")
 
     chatbot = db.query(Chatbot).filter(Chatbot.id == conv.chatbot_id).first()
+    if not chatbot:
+        raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
+    if not chatbot.collection_name or not chatbot.collection_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="챗봇에 컬렉션이 설정되지 않았습니다. 먼저 PDF를 업로드해주세요.",
+        )
 
     # Save user message
     user_msg = Message(

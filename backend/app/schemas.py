@@ -31,12 +31,6 @@ class LoginRequest(BaseModel):
 
 
 # --- Chatbot ---
-class ChatbotCreate(BaseModel):
-    name: str
-    description: str | None = None
-    collection_name: str
-
-
 class ChatbotResponse(BaseModel):
     id: str
     name: str

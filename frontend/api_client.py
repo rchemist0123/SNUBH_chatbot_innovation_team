@@ -46,15 +46,6 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
-    def create_chatbot(self, name: str, description: str, collection_name: str) -> dict:
-        resp = requests.post(
-            f"{self.base_url}/api/chatbots",
-            headers=self._headers(),
-            json={"name": name, "description": description, "collection_name": collection_name},
-        )
-        resp.raise_for_status()
-        return resp.json()
-
     # ── Conversations ──
 
     def list_conversations(self, chatbot_id: str | None = None) -> list[dict]:
