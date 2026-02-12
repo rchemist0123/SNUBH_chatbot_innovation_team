@@ -1,36 +1,51 @@
-import json
+import logging
 import os
 import time
 
 import chromadb
 import httpx
-from langchain_community.document_loaders import PyPDFLoader
+import pdfplumber
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
 
 from .config import settings
 
+logger = logging.getLogger(__name__)
 
-class OllamaEmbeddings:
-    """Ollama embedding client."""
 
-    def __init__(self, model: str = settings.EMBEDDING_MODEL, base_url: str = settings.OLLAMA_BASE_URL):
-        self.model = model
-        self.base_url = base_url
+# ──────────────────────────── Embeddings ────────────────────────────
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        embeddings = []
-        for text in texts:
-            resp = httpx.post(
-                f"{self.base_url}/api/embeddings",
-                json={"model": self.model, "prompt": text},
-                timeout=120.0,
-            )
-            resp.raise_for_status()
-            embeddings.append(resp.json()["embedding"])
-        return embeddings
+
+class HuggingFaceEmbeddings:
+    """HuggingFace sentence-transformers embedding client.
+
+    Uses intfloat/multilingual-e5-large by default.
+    The e5 model family requires 'query: ' prefix for queries
+    and 'passage: ' prefix for documents.
+    """
+
+    def __init__(
+        self,
+        model_name: str = settings.HF_EMBEDDING_MODEL,
+        cache_dir: str = settings.HF_CACHE_DIR,
+    ):
+        self.model = SentenceTransformer(model_name, cache_folder=cache_dir)
+        self.model_name = model_name
+
+    def embed(self, texts: list[str], prefix: str = "passage: ") -> list[list[float]]:
+        """Embed a list of texts with the given prefix."""
+        prefixed = [f"{prefix}{t}" for t in texts]
+        embeddings = self.model.encode(
+            prefixed, show_progress_bar=False, normalize_embeddings=True
+        )
+        return embeddings.tolist()
 
     def embed_query(self, text: str) -> list[float]:
-        return self.embed([text])[0]
+        """Embed a single query with 'query: ' prefix."""
+        return self.embed([text], prefix="query: ")[0]
+
+
+# ──────────────────────────── LLM ────────────────────────────
 
 
 class OllamaLLM:
@@ -55,38 +70,105 @@ class OllamaLLM:
         }
 
 
+# ──────────────────────────── PDF Parsing ────────────────────────────
+
+
+def _table_to_text(table: list[list]) -> str:
+    """Convert a pdfplumber table to a readable pipe-delimited text."""
+    rows = []
+    for row in table:
+        cleaned = [str(cell).strip() if cell else "" for cell in row]
+        rows.append(" | ".join(cleaned))
+    return "\n".join(rows)
+
+
+def load_pdf_with_tables(pdf_path: str) -> list[dict]:
+    """Extract text and tables from a PDF using pdfplumber.
+
+    Tables are extracted separately and converted to text.
+    Returns a list of dicts: {"content": str, "metadata": dict}.
+    """
+    documents = []
+    filename = os.path.basename(pdf_path)
+
+    with pdfplumber.open(pdf_path) as pdf:
+        for page_num, page in enumerate(pdf.pages):
+            # Extract tables first
+            tables = page.extract_tables()
+            for table in tables:
+                if table:
+                    table_text = _table_to_text(table)
+                    if table_text.strip():
+                        documents.append({
+                            "content": table_text,
+                            "metadata": {
+                                "source": filename,
+                                "page": page_num,
+                                "content_type": "table",
+                            },
+                        })
+
+            # Extract body text
+            text = page.extract_text() or ""
+            if text.strip():
+                documents.append({
+                    "content": text,
+                    "metadata": {
+                        "source": filename,
+                        "page": page_num,
+                        "content_type": "text",
+                    },
+                })
+
+    return documents
+
+
+# ──────────────────────────── RAG Pipeline ────────────────────────────
+
+
 class RAGPipeline:
     """RAG pipeline: PDF ingestion, vector search, and answer generation."""
 
     def __init__(self):
-        self.embeddings = OllamaEmbeddings()
+        self.embeddings = HuggingFaceEmbeddings()
         self.llm = OllamaLLM()
         self.chroma_client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR)
         self.text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=settings.CHUNK_SIZE,
             chunk_overlap=settings.CHUNK_OVERLAP,
+            separators=["\n\n", "\n", ".", "!", "?", ";", ",", " ", ""],
         )
 
     def ingest_pdf(self, pdf_path: str, collection_name: str) -> int:
         """Load a PDF, split into chunks, embed, and store in ChromaDB.
         Returns the number of chunks ingested."""
-        loader = PyPDFLoader(pdf_path)
-        pages = loader.load()
-        chunks = self.text_splitter.split_documents(pages)
+        raw_docs = load_pdf_with_tables(pdf_path)
+
+        chunks = []
+        for doc in raw_docs:
+            if doc["metadata"]["content_type"] == "table":
+                # Keep tables as whole chunks — splitting destroys table structure
+                chunks.append(doc)
+            else:
+                # Split text content
+                split_texts = self.text_splitter.split_text(doc["content"])
+                for text in split_texts:
+                    chunks.append({
+                        "content": text,
+                        "metadata": doc["metadata"].copy(),
+                    })
+
+        if not chunks:
+            logger.warning("No chunks extracted from %s", pdf_path)
+            return 0
 
         collection = self.chroma_client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 
-        texts = [chunk.page_content for chunk in chunks]
-        metadatas = [
-            {
-                "source": os.path.basename(pdf_path),
-                "page": chunk.metadata.get("page", 0),
-            }
-            for chunk in chunks
-        ]
+        texts = [chunk["content"] for chunk in chunks]
+        metadatas = [chunk["metadata"] for chunk in chunks]
         ids = [f"{os.path.basename(pdf_path)}_{i}" for i in range(len(chunks))]
 
         # Embed in batches
@@ -104,6 +186,7 @@ class RAGPipeline:
                 embeddings=batch_embeddings,
             )
 
+        logger.info("Ingested %d chunks from %s", len(chunks), pdf_path)
         return len(chunks)
 
     def ingest_directory(self, directory: str, collection_name: str) -> int:
@@ -118,7 +201,16 @@ class RAGPipeline:
 
     def search(self, query: str, collection_name: str, top_k: int = settings.TOP_K) -> list[dict]:
         """Search the vector store and return relevant chunks."""
-        collection = self.chroma_client.get_or_create_collection(name=collection_name)
+        collection = self.chroma_client.get_or_create_collection(
+            name=collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        # Empty collection guard
+        if collection.count() == 0:
+            logger.warning("Collection '%s' is empty.", collection_name)
+            return []
+
         query_embedding = self.embeddings.embed_query(query)
 
         results = collection.query(
@@ -134,10 +226,14 @@ class RAGPipeline:
                 results["metadatas"][0],
                 results["distances"][0],
             ):
+                # Filter by distance threshold
+                if dist > settings.DISTANCE_THRESHOLD:
+                    continue
                 retrieved.append({
                     "content": doc,
                     "source": meta.get("source", ""),
                     "page": meta.get("page"),
+                    "content_type": meta.get("content_type", "text"),
                     "distance": dist,
                 })
         return retrieved
@@ -148,6 +244,19 @@ class RAGPipeline:
 
         # Retrieve
         retrieved_docs = self.search(question, collection_name)
+
+        # If no relevant docs, return immediately without calling LLM
+        if not retrieved_docs:
+            latency_ms = (time.time() - start_time) * 1000
+            return {
+                "answer": "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다. 다른 키워드로 질문해 주세요.",
+                "references": [],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "latency_ms": latency_ms,
+            }
+
         context = "\n\n---\n\n".join([doc["content"] for doc in retrieved_docs])
 
         # Build prompt

@@ -319,6 +319,44 @@ def chat(
     )
 
 
+# ──────────────────────────── Debug ────────────────────────────
+
+@app.get("/api/debug/vectordb")
+def debug_vectordb():
+    """Diagnostic endpoint: check vector DB collections and document counts."""
+    try:
+        collections = rag_pipeline.chroma_client.list_collections()
+        result = []
+        for col in collections:
+            collection = rag_pipeline.chroma_client.get_collection(col.name)
+            count = collection.count()
+            sample = collection.peek(limit=3) if count > 0 else {}
+            result.append({
+                "name": col.name,
+                "count": count,
+                "sample_ids": (sample.get("ids") or [])[:3],
+                "sample_documents": [
+                    d[:200] if d else "" for d in (sample.get("documents") or [])[:3]
+                ],
+                "sample_metadatas": (sample.get("metadatas") or [])[:3],
+            })
+        return {"status": "ok", "collections": result}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@app.get("/api/debug/search")
+def debug_search(q: str, collection: str = settings.COLLECTION_NAME, top_k: int = 5):
+    """Test search without LLM generation. Returns raw retrieval results with distances."""
+    results = rag_pipeline.search(q, collection, top_k=top_k)
+    return {
+        "query": q,
+        "collection": collection,
+        "results_count": len(results),
+        "results": results,
+    }
+
+
 # ──────────────────────────── Health ────────────────────────────
 
 @app.get("/api/health")
