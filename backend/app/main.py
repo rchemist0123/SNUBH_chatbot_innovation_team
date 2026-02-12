@@ -219,6 +219,13 @@ def chat(
         raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다.")
 
     chatbot = db.query(Chatbot).filter(Chatbot.id == conv.chatbot_id).first()
+    if not chatbot:
+        raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
+    if not chatbot.collection_name or not chatbot.collection_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="챗봇에 컬렉션이 설정되지 않았습니다. 먼저 PDF를 업로드해주세요.",
+        )
 
     # Save user message
     user_msg = Message(
