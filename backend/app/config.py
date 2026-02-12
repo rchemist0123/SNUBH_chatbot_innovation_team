@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 200
     TOP_K: int = 5
 
+    # Service identity — one chatbot per container
+    SERVICE_NAME: str = "경영혁신팀 챗봇"
+    SERVICE_DESCRIPTION: str = "병원 경영혁신팀 매뉴얼 기반 질의응답 서비스"
+    COLLECTION_NAME: str = "innovation_team"
+
     class Config:
         env_file = ".env"
 

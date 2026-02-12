@@ -96,6 +96,34 @@ st.markdown("""
         text-align: right;
         margin-top: 2px;
     }
+
+    /* Chatbot service card */
+    .chatbot-card {
+        background: white;
+        border: 2px solid #90CAF9;
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .chatbot-card:hover {
+        border-color: #1565C0;
+        box-shadow: 0 2px 8px rgba(21, 101, 192, 0.15);
+    }
+    .chatbot-card.active {
+        border-color: #1565C0;
+        background: #E3F2FD;
+    }
+    .chatbot-card h4 {
+        margin: 8px 0 4px;
+        color: #0D47A1;
+    }
+    .chatbot-card p {
+        margin: 0;
+        font-size: 0.85rem;
+        color: #546E7A;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -112,7 +140,7 @@ def init_state():
         "current_conversation": None,
         "messages": [],
         "references": [],
-        "page": "login",  # login | register | chat
+        "page": "login",  # login | register | select_chatbot | chat
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -139,7 +167,7 @@ def show_login():
                     st.session_state.token = token
                     st.session_state.logged_in = True
                     st.session_state.user = st.session_state.api.get_me()
-                    st.session_state.page = "chat"
+                    st.session_state.page = "select_chatbot"
                     st.rerun()
                 except Exception as e:
                     st.error("로그인에 실패했습니다. 사용자명과 비밀번호를 확인해주세요.")
@@ -179,10 +207,63 @@ def show_register():
             st.rerun()
 
 
+# ──────────────────────────── Chatbot Selection Page ────────────────────────────
+
+def show_select_chatbot():
+    api: APIClient = st.session_state.api
+
+    st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
+
+    col_title, col_logout = st.columns([5, 1])
+    with col_title:
+        st.subheader("서비스를 선택하세요")
+    with col_logout:
+        if st.button("🚪 로그아웃"):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+
+    try:
+        chatbots = api.list_chatbots()
+    except Exception:
+        chatbots = []
+
+    if not chatbots:
+        st.info("현재 이용 가능한 챗봇 서비스가 없습니다. 관리자에게 문의해주세요.")
+        return
+
+    # Display chatbot cards in a grid
+    cols = st.columns(min(len(chatbots), 3))
+    for i, cb in enumerate(chatbots):
+        with cols[i % 3]:
+            st.markdown(
+                f'<div class="chatbot-card">'
+                f'<div style="font-size:2rem;">🤖</div>'
+                f'<h4>{cb["name"]}</h4>'
+                f'<p>{cb.get("description") or ""}</p>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("시작하기", key=f"select_{cb['id']}", use_container_width=True):
+                st.session_state.current_chatbot = cb
+                st.session_state.current_conversation = None
+                st.session_state.messages = []
+                st.session_state.references = []
+                st.session_state.page = "chat"
+                st.rerun()
+
+
 # ──────────────────────────── Chat Page ────────────────────────────
 
 def show_chat():
     api: APIClient = st.session_state.api
+
+    if not st.session_state.current_chatbot:
+        st.session_state.page = "select_chatbot"
+        st.rerun()
+        return
+
+    chatbot = st.session_state.current_chatbot
 
     # ── Sidebar: Navigation + Conversation History ──
     with st.sidebar:
@@ -194,154 +275,83 @@ def show_chat():
 
         st.divider()
 
-        # Chatbot selector
-        st.markdown("**📋 챗봇 선택**")
-        try:
-            chatbots = api.list_chatbots()
-        except Exception:
-            chatbots = []
-
-        if not chatbots:
-            st.info("등록된 챗봇이 없습니다.")
-            with st.expander("➕ 새 챗봇 추가"):
-                with st.form("new_chatbot"):
-                    cb_name = st.text_input("챗봇 이름")
-                    cb_desc = st.text_input("설명")
-                    cb_coll = st.text_input("컬렉션 이름 (영문)")
-                    if st.form_submit_button("생성"):
-                        try:
-                            new_cb = api.create_chatbot(cb_name, cb_desc, cb_coll)
-                            st.session_state.current_chatbot = new_cb
-                            st.rerun()
-                        except Exception:
-                            st.error("챗봇 생성에 실패했습니다.")
-        else:
-            chatbot_names = [cb["name"] for cb in chatbots]
-            # Determine current index
-            current_idx = 0
-            if st.session_state.current_chatbot:
-                for i, cb in enumerate(chatbots):
-                    if cb["id"] == st.session_state.current_chatbot["id"]:
-                        current_idx = i
-                        break
-
-            selected_name = st.selectbox(
-                "챗봇",
-                chatbot_names,
-                index=current_idx,
-                label_visibility="collapsed",
-            )
-            selected_chatbot = chatbots[chatbot_names.index(selected_name)]
-
-            if (
-                not st.session_state.current_chatbot
-                or st.session_state.current_chatbot["id"] != selected_chatbot["id"]
-            ):
-                st.session_state.current_chatbot = selected_chatbot
-                st.session_state.current_conversation = None
-                st.session_state.messages = []
-                st.session_state.references = []
-                st.rerun()
-
-            with st.expander("➕ 새 챗봇 추가"):
-                with st.form("new_chatbot"):
-                    cb_name = st.text_input("챗봇 이름")
-                    cb_desc = st.text_input("설명")
-                    cb_coll = st.text_input("컬렉션 이름 (영문)")
-                    if st.form_submit_button("생성"):
-                        try:
-                            new_cb = api.create_chatbot(cb_name, cb_desc, cb_coll)
-                            st.session_state.current_chatbot = new_cb
-                            st.rerun()
-                        except Exception:
-                            st.error("챗봇 생성에 실패했습니다.")
-
-        st.divider()
-
-        # PDF upload
-        if st.session_state.current_chatbot:
-            with st.expander("📄 PDF 매뉴얼 업로드"):
-                uploaded_file = st.file_uploader("PDF 파일 선택", type=["pdf"], label_visibility="collapsed")
-                if uploaded_file and st.button("업로드 및 색인", use_container_width=True):
-                    with st.spinner("PDF 업로드 및 색인 중..."):
-                        try:
-                            result = api.upload_pdf(st.session_state.current_chatbot["id"], uploaded_file)
-                            st.success(result["message"])
-                        except Exception as e:
-                            st.error(f"업로드 실패: {e}")
+        # Current chatbot info
+        st.markdown(f"**🤖 {chatbot['name']}**")
+        if st.button("← 서비스 목록", use_container_width=True):
+            st.session_state.current_chatbot = None
+            st.session_state.current_conversation = None
+            st.session_state.messages = []
+            st.session_state.references = []
+            st.session_state.page = "select_chatbot"
+            st.rerun()
 
         st.divider()
 
         # Conversation history
         st.markdown("**💬 대화 기록**")
-        if st.session_state.current_chatbot:
-            if st.button("➕ 새 대화", use_container_width=True):
-                try:
-                    conv = api.create_conversation(st.session_state.current_chatbot["id"])
-                    st.session_state.current_conversation = conv
-                    st.session_state.messages = []
-                    st.session_state.references = []
-                    st.rerun()
-                except Exception:
-                    st.error("대화 생성 실패")
-
+        if st.button("➕ 새 대화", use_container_width=True):
             try:
-                conversations = api.list_conversations(st.session_state.current_chatbot["id"])
+                conv = api.create_conversation(chatbot["id"])
+                st.session_state.current_conversation = conv
+                st.session_state.messages = []
+                st.session_state.references = []
+                st.rerun()
             except Exception:
-                conversations = []
+                st.error("대화 생성 실패")
 
-            for conv in conversations:
-                col_btn, col_del = st.columns([5, 1])
-                with col_btn:
-                    is_active = (
-                        st.session_state.current_conversation
-                        and st.session_state.current_conversation["id"] == conv["id"]
-                    )
-                    label = f"{'▶ ' if is_active else ''}{conv['title'] or '새 대화'}"
-                    if st.button(label, key=f"conv_{conv['id']}", use_container_width=True):
-                        try:
-                            full_conv = api.get_conversation(conv["id"])
-                            st.session_state.current_conversation = full_conv
-                            st.session_state.messages = full_conv.get("messages", [])
+        try:
+            conversations = api.list_conversations(chatbot["id"])
+        except Exception:
+            conversations = []
+
+        for conv in conversations:
+            col_btn, col_del = st.columns([5, 1])
+            with col_btn:
+                is_active = (
+                    st.session_state.current_conversation
+                    and st.session_state.current_conversation["id"] == conv["id"]
+                )
+                label = f"{'▶ ' if is_active else ''}{conv['title'] or '새 대화'}"
+                if st.button(label, key=f"conv_{conv['id']}", use_container_width=True):
+                    try:
+                        full_conv = api.get_conversation(conv["id"])
+                        st.session_state.current_conversation = full_conv
+                        st.session_state.messages = full_conv.get("messages", [])
+                        st.session_state.references = []
+                        # Load last assistant message references
+                        for msg in reversed(full_conv.get("messages", [])):
+                            if msg["role"] == "assistant" and msg.get("references"):
+                                try:
+                                    st.session_state.references = json.loads(msg["references"])
+                                except Exception:
+                                    pass
+                                break
+                        st.rerun()
+                    except Exception:
+                        st.error("대화 불러오기 실패")
+            with col_del:
+                if st.button("🗑", key=f"del_{conv['id']}"):
+                    try:
+                        api.delete_conversation(conv["id"])
+                        if (
+                            st.session_state.current_conversation
+                            and st.session_state.current_conversation["id"] == conv["id"]
+                        ):
+                            st.session_state.current_conversation = None
+                            st.session_state.messages = []
                             st.session_state.references = []
-                            # Load last assistant message references
-                            for msg in reversed(full_conv.get("messages", [])):
-                                if msg["role"] == "assistant" and msg.get("references"):
-                                    try:
-                                        st.session_state.references = json.loads(msg["references"])
-                                    except Exception:
-                                        pass
-                                    break
-                            st.rerun()
-                        except Exception:
-                            st.error("대화 불러오기 실패")
-                with col_del:
-                    if st.button("🗑", key=f"del_{conv['id']}"):
-                        try:
-                            api.delete_conversation(conv["id"])
-                            if (
-                                st.session_state.current_conversation
-                                and st.session_state.current_conversation["id"] == conv["id"]
-                            ):
-                                st.session_state.current_conversation = None
-                                st.session_state.messages = []
-                                st.session_state.references = []
-                            st.rerun()
-                        except Exception:
-                            st.error("삭제 실패")
+                        st.rerun()
+                    except Exception:
+                        st.error("삭제 실패")
 
     # ── Main Content: Chat + References ──
     st.markdown(
         '<div class="main-header">'
-        f'<h2>🏥 {st.session_state.current_chatbot["name"] if st.session_state.current_chatbot else "병원 매뉴얼 RAG 챗봇"}</h2>'
-        f'<span style="font-size:0.9rem;">{st.session_state.current_chatbot["description"] or "" if st.session_state.current_chatbot else ""}</span>'
+        f'<h2>🏥 {chatbot["name"]}</h2>'
+        f'<span style="font-size:0.9rem;">{chatbot.get("description") or ""}</span>'
         "</div>",
         unsafe_allow_html=True,
     )
-
-    if not st.session_state.current_chatbot:
-        st.info("왼쪽 사이드바에서 챗봇을 선택하거나 새로 추가해주세요.")
-        return
 
     if not st.session_state.current_conversation:
         st.info("왼쪽 사이드바에서 '새 대화'를 눌러 대화를 시작해주세요.")
@@ -424,5 +434,7 @@ if st.session_state.page == "login" and not st.session_state.logged_in:
     show_login()
 elif st.session_state.page == "register" and not st.session_state.logged_in:
     show_register()
+elif st.session_state.page == "select_chatbot":
+    show_select_chatbot()
 else:
     show_chat()

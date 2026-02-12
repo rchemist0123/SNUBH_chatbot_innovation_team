@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr
 
 
 # --- Auth ---
@@ -31,22 +31,6 @@ class LoginRequest(BaseModel):
 
 
 # --- Chatbot ---
-class ChatbotCreate(BaseModel):
-    name: str
-    description: str | None = None
-    collection_name: str
-
-    @field_validator("collection_name")
-    @classmethod
-    def collection_name_must_be_valid(cls, v: str) -> str:
-        v = v.strip()
-        if len(v) < 3 or len(v) > 63:
-            raise ValueError("컬렉션 이름은 3~63자여야 합니다.")
-        if not v[0].isalnum() or not v[-1].isalnum():
-            raise ValueError("컬렉션 이름은 영숫자로 시작하고 끝나야 합니다.")
-        return v
-
-
 class ChatbotResponse(BaseModel):
     id: str
     name: str
