@@ -45,20 +45,50 @@ def _seed_chatbot():
         ).first()
 
         if not chatbot:
-            chatbot = Chatbot(
-                name=settings.SERVICE_NAME,
-                description=settings.SERVICE_DESCRIPTION,
-                collection_name=settings.COLLECTION_NAME,
-            )
-            db.add(chatbot)
-            db.commit()
-            db.refresh(chatbot)
-            logger.info("Chatbot registered: %s (%s)", chatbot.name, chatbot.collection_name)
+            # Check if a legacy chatbot with the same name exists (different collection_name)
+            legacy = db.query(Chatbot).filter(
+                Chatbot.name == settings.SERVICE_NAME
+            ).first()
+            if legacy:
+                # Migrate: update collection_name in-place to avoid creating a duplicate
+                legacy.collection_name = settings.COLLECTION_NAME
+                legacy.description = settings.SERVICE_DESCRIPTION
+                db.commit()
+                db.refresh(legacy)
+                chatbot = legacy
+                logger.info("Chatbot migrated: %s (%s)", chatbot.name, chatbot.collection_name)
+            else:
+                chatbot = Chatbot(
+                    name=settings.SERVICE_NAME,
+                    description=settings.SERVICE_DESCRIPTION,
+                    collection_name=settings.COLLECTION_NAME,
+                )
+                db.add(chatbot)
+                db.commit()
+                db.refresh(chatbot)
+                logger.info("Chatbot registered: %s (%s)", chatbot.name, chatbot.collection_name)
         else:
             chatbot.name = settings.SERVICE_NAME
             chatbot.description = settings.SERVICE_DESCRIPTION
             db.commit()
             logger.info("Chatbot updated: %s (%s)", chatbot.name, chatbot.collection_name)
+
+        # Cleanup: remove any other duplicate chatbot entries that are not the canonical one.
+        # This handles cases where the DB accumulated extra rows from the old manual-creation UI.
+        duplicates = db.query(Chatbot).filter(Chatbot.id != chatbot.id).all()
+        if duplicates:
+            for dup in duplicates:
+                logger.warning(
+                    "Removing duplicate chatbot: id=%s name=%s collection=%s",
+                    dup.id, dup.name, dup.collection_name,
+                )
+                # Reassign conversations to the canonical chatbot before deleting
+                db.query(Conversation).filter(
+                    Conversation.chatbot_id == dup.id
+                ).update({"chatbot_id": chatbot.id}, synchronize_session=False)
+                db.delete(dup)
+            db.commit()
+            logger.info("Removed %d duplicate chatbot(s).", len(duplicates))
 
         # Auto-ingest manuals if directory exists and collection is empty
         manuals_dir = settings.MANUALS_DIR
