@@ -39,37 +39,79 @@ st.markdown("""
     }
 
     /* Chat messages */
+    .user-message-wrapper {
+        display: flex;
+        justify-content: flex-end;
+        margin: 8px 0;
+    }
     .user-message {
         background-color: #1565C0;
         color: white;
         padding: 12px 18px;
         border-radius: 18px 18px 4px 18px;
-        margin: 8px 0;
         max-width: 80%;
-        margin-left: auto;
-        text-align: right;
+        display: inline-block;
+        text-align: left;
+        word-break: break-word;
     }
     .assistant-message {
-        background-color: #E3F2FD;
-        color: #0D47A1;
+        background-color: #FFFFFF;
+        color: #1a1a1a;
         padding: 12px 18px;
         border-radius: 18px 18px 18px 4px;
         margin: 8px 0;
         max-width: 80%;
+        border: 1px solid #E0E0E0;
+    }
+
+    /* Loading indicator */
+    .loading-indicator {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 18px;
+        background-color: #FFFFFF;
+        color: #555555;
+        border-radius: 18px 18px 18px 4px;
+        margin: 8px 0;
+        max-width: 80%;
+        border: 1px solid #E0E0E0;
+        font-size: 0.9rem;
+    }
+    .spinner-dots {
+        display: inline-flex;
+        gap: 5px;
+        align-items: center;
+    }
+    .spinner-dots span {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #1565C0;
+        animation: dot-bounce 1.2s infinite ease-in-out;
+    }
+    .spinner-dots span:nth-child(1) { animation-delay: 0s; }
+    .spinner-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .spinner-dots span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes dot-bounce {
+        0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+        40% { transform: scale(1.0); opacity: 1; }
     }
 
     /* Reference card */
     .ref-card {
-        background-color: #E8EAF6;
-        border-left: 4px solid #1565C0;
+        background-color: #FFFFFF;
+        border: 1px solid #E0E0E0;
+        border-left: 4px solid #90CAF9;
         padding: 10px 14px;
         border-radius: 6px;
         margin: 6px 0;
         font-size: 0.85rem;
+        color: #1a1a1a;
     }
     .ref-card .ref-source {
         font-weight: bold;
-        color: #1565C0;
+        color: #333333;
     }
 
     /* Sidebar styling */
@@ -393,7 +435,7 @@ def show_chat():
                 content = msg["content"]
                 if role == "user":
                     st.markdown(
-                        f'<div class="user-message">{content}</div>',
+                        f'<div class="user-message-wrapper"><div class="user-message">{content}</div></div>',
                         unsafe_allow_html=True,
                     )
                 else:
@@ -419,10 +461,17 @@ def show_chat():
 
             with chat_container:
                 st.markdown(
-                    f'<div class="user-message">{question}</div>',
+                    f'<div class="user-message-wrapper"><div class="user-message">{question}</div></div>',
                     unsafe_allow_html=True,
                 )
                 placeholder = st.empty()
+                placeholder.markdown(
+                    '<div class="loading-indicator">'
+                    '<div class="spinner-dots"><span></span><span></span><span></span></div>'
+                    ' 답변을 준비하고 있습니다...'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
                 try:
                     for chunk in api.chat_stream(
                         st.session_state.current_conversation["id"], question
