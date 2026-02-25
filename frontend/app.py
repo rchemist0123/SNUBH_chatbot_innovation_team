@@ -147,6 +147,16 @@ st.markdown("""
         border-top: 2px solid #E3F2FD;
         margin: 0.5rem 0 1.5rem;
     }
+
+    /* Auth form card */
+    .auth-card {
+        background: white;
+        border: 1px solid #BBDEFB;
+        border-radius: 16px;
+        padding: 2rem 2rem 1.5rem;
+        box-shadow: 0 4px 20px rgba(21, 101, 192, 0.08);
+        margin-top: 1rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -176,9 +186,10 @@ init_state()
 # ──────────────────────────── Auth Pages ────────────────────────────
 
 def show_login():
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([3, 2, 3])
     with col2:
         st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
+        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
         st.subheader("로그인")
         with st.form("login_form"):
             username = st.text_input("사용자명")
@@ -198,12 +209,14 @@ def show_login():
         if st.button("회원가입", use_container_width=True):
             st.session_state.page = "register"
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def show_register():
-    col1, col2, col3 = st.columns([1, 2, 1])
+    col1, col2, col3 = st.columns([3, 2, 3])
     with col2:
         st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
+        st.markdown('<div class="auth-card">', unsafe_allow_html=True)
         st.subheader("회원가입")
         with st.form("register_form"):
             username = st.text_input("사용자명")
@@ -228,6 +241,7 @@ def show_register():
         if st.button("로그인으로 돌아가기", use_container_width=True):
             st.session_state.page = "login"
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ──────────────────────────── Chatbot Selection Page ────────────────────────────
