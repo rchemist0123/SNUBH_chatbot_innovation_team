@@ -6,11 +6,12 @@ from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from .auth import create_access_token, get_current_user, hash_password, verify_password
 from .config import settings
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, SessionLocal
 from .models import Chatbot, Conversation, Message, User
 from .rag import rag_pipeline
 from .schemas import (
@@ -347,6 +348,92 @@ def chat(
         total_tokens=result["total_tokens"],
         latency_ms=result["latency_ms"],
     )
+
+
+@app.post("/api/chat/stream")
+def chat_stream_endpoint(
+    body: ChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    conv = (
+        db.query(Conversation)
+        .filter(Conversation.id == body.conversation_id, Conversation.user_id == current_user.id)
+        .first()
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다.")
+
+    chatbot = db.query(Chatbot).filter(Chatbot.id == conv.chatbot_id).first()
+    if not chatbot:
+        raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
+    if not chatbot.collection_name or not chatbot.collection_name.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="챗봇에 컬렉션이 설정되지 않았습니다. 먼저 PDF를 업로드해주세요.",
+        )
+
+    conv_id = conv.id
+    chatbot_collection = chatbot.collection_name
+
+    # Save user message before streaming starts
+    user_msg = Message(
+        conversation_id=conv_id,
+        role="user",
+        content=body.question,
+    )
+    db.add(user_msg)
+    if conv.title == "새 대화":
+        conv.title = body.question[:50]
+    conv.updated_at = datetime.utcnow()
+    db.commit()
+
+    def generate():
+        full_answer_parts = []
+        final_meta = {
+            "references": [],
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": 0,
+        }
+
+        try:
+            for chunk in rag_pipeline.answer_stream(body.question, chatbot_collection):
+                if chunk["type"] == "token":
+                    full_answer_parts.append(chunk["content"])
+                    yield f"data: {json.dumps({'type': 'token', 'content': chunk['content']}, ensure_ascii=False)}\n\n"
+                elif chunk["type"] == "meta":
+                    final_meta = {k: v for k, v in chunk.items() if k != "type"}
+                    yield f"data: {json.dumps({'type': 'meta', **final_meta}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.error("Streaming error: %s", e)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+
+        # Save assistant message to DB using a new session (original is closed after endpoint returns)
+        answer = "".join(full_answer_parts)
+        save_db = SessionLocal()
+        try:
+            assistant_msg = Message(
+                conversation_id=conv_id,
+                role="assistant",
+                content=answer,
+                prompt_tokens=final_meta["prompt_tokens"],
+                completion_tokens=final_meta["completion_tokens"],
+                total_tokens=final_meta["total_tokens"],
+                latency_ms=final_meta["latency_ms"],
+                references=json.dumps(final_meta.get("references", []), ensure_ascii=False),
+            )
+            save_db.add(assistant_msg)
+            save_db.commit()
+        except Exception as e:
+            logger.error("DB save error after stream: %s", e)
+        finally:
+            save_db.close()
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 # ──────────────────────────── Debug ────────────────────────────
