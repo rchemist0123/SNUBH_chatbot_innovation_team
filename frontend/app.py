@@ -97,41 +97,27 @@ st.markdown("""
         margin-top: 2px;
     }
 
-    /* Chatbot service card */
-    .chatbot-card {
-        background: white;
-        border: 2px solid #90CAF9;
-        border-radius: 16px;
-        padding: 28px 20px;
-        text-align: center;
-        cursor: pointer;
-        transition: all 0.2s;
-        min-height: 180px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 6px;
+    /* Chatbot card buttons - primary buttons styled as cards */
+    .stButton > button[kind="primary"] {
+        background: white !important;
+        border: 2px solid #90CAF9 !important;
+        border-radius: 16px !important;
+        padding: 28px 20px !important;
+        min-height: 160px !important;
+        color: #0D47A1 !important;
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        transition: all 0.2s !important;
+        white-space: pre-wrap !important;
+        line-height: 2 !important;
+        text-align: center !important;
     }
-    .chatbot-card:hover {
-        border-color: #1565C0;
-        box-shadow: 0 4px 16px rgba(21, 101, 192, 0.18);
-        transform: translateY(-2px);
-    }
-    .chatbot-card.active {
-        border-color: #1565C0;
-        background: #E3F2FD;
-    }
-    .chatbot-card h4 {
-        margin: 10px 0 6px;
-        color: #0D47A1;
-        font-size: 1.05rem;
-    }
-    .chatbot-card p {
-        margin: 0;
-        font-size: 0.85rem;
-        color: #546E7A;
-        line-height: 1.5;
+    .stButton > button[kind="primary"]:hover {
+        border-color: #1565C0 !important;
+        box-shadow: 0 4px 16px rgba(21, 101, 192, 0.18) !important;
+        transform: translateY(-2px) !important;
+        background: #E3F2FD !important;
+        color: #0D47A1 !important;
     }
 
     /* Centered section title */
@@ -249,54 +235,46 @@ def show_register():
 def show_select_chatbot():
     api: APIClient = st.session_state.api
 
-    # Header bar with logout button
-    col_header, col_logout = st.columns([5, 1])
-    with col_header:
-        st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
-    with col_logout:
-        st.markdown("<div style='margin-top:6px'>", unsafe_allow_html=True)
-        if st.button("🚪 로그아웃", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+    # Header bar (no logout button here)
+    st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
 
     try:
         chatbots = api.list_chatbots()
     except Exception:
         chatbots = []
 
-    # Center the content with side padding
-    _, center, _ = st.columns([1, 4, 1])
+    # Center the content with side padding - half of original width ([1,4,1] → [2,2,2])
+    _, center, _ = st.columns([2, 2, 2])
     with center:
         st.markdown('<p class="section-title">서비스를 선택하세요</p>', unsafe_allow_html=True)
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
         if not chatbots:
             st.info("현재 이용 가능한 챗봇 서비스가 없습니다. 관리자에게 문의해주세요.")
-            return
+        else:
+            # Display chatbot cards as clickable buttons - no separate 시작하기 button
+            num_cols = min(len(chatbots), 3)
+            cols = st.columns(num_cols)
+            for i, cb in enumerate(chatbots):
+                with cols[i % num_cols]:
+                    label = f"🤖\n\n**{cb['name']}**"
+                    if cb.get("description"):
+                        label += f"\n\n{cb['description']}"
+                    if st.button(label, key=f"select_{cb['id']}", use_container_width=True, type="primary"):
+                        st.session_state.current_chatbot = cb
+                        st.session_state.current_conversation = None
+                        st.session_state.messages = []
+                        st.session_state.references = []
+                        st.session_state.page = "chat"
+                        st.rerun()
 
-        # Display chatbot cards in a centered grid (max 3 per row)
-        num_cols = min(len(chatbots), 3)
-        cols = st.columns(num_cols)
-        for i, cb in enumerate(chatbots):
-            with cols[i % num_cols]:
-                st.markdown(
-                    f'<div class="chatbot-card">'
-                    f'<div style="font-size:2.5rem;">🤖</div>'
-                    f'<h4>{cb["name"]}</h4>'
-                    f'<p>{cb.get("description") or ""}</p>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                if st.button("시작하기", key=f"select_{cb['id']}", use_container_width=True):
-                    st.session_state.current_chatbot = cb
-                    st.session_state.current_conversation = None
-                    st.session_state.messages = []
-                    st.session_state.references = []
-                    st.session_state.page = "chat"
-                    st.rerun()
+    # Logout button at bottom-right
+    _, col_logout = st.columns([5, 1])
+    with col_logout:
+        if st.button("🚪 로그아웃", key="logout_select", use_container_width=True):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
 
 
 # ──────────────────────────── Chat Page ────────────────────────────
