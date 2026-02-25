@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import time
@@ -68,6 +69,28 @@ class OllamaLLM:
             "prompt_eval_count": data.get("prompt_eval_count", 0),
             "eval_count": data.get("eval_count", 0),
         }
+
+    def generate_stream(self, prompt: str):
+        """Stream tokens from Ollama. Yields dicts with type 'token' or 'stats'."""
+        with httpx.stream(
+            "POST",
+            f"{self.base_url}/api/generate",
+            json={"model": self.model, "prompt": prompt, "stream": True},
+            timeout=300.0,
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if line:
+                    data = json.loads(line)
+                    token = data.get("response", "")
+                    if token:
+                        yield {"type": "token", "content": token}
+                    if data.get("done"):
+                        yield {
+                            "type": "stats",
+                            "prompt_eval_count": data.get("prompt_eval_count", 0),
+                            "eval_count": data.get("eval_count", 0),
+                        }
 
 
 # ──────────────────────────── PDF Parsing ────────────────────────────
@@ -297,6 +320,74 @@ class RAGPipeline:
             "total_tokens": prompt_tokens + completion_tokens,
             "latency_ms": latency_ms,
         }
+
+
+    def answer_stream(self, question: str, collection_name: str):
+        """Full RAG: retrieve context, then stream the answer token by token.
+
+        Yields dicts:
+          {"type": "token", "content": str}
+          {"type": "meta", "references": [...], "prompt_tokens": int,
+           "completion_tokens": int, "total_tokens": int, "latency_ms": float}
+
+        For the "no results" case the meta chunk also includes "answer".
+        """
+        start_time = time.time()
+        retrieved_docs = self.search(question, collection_name)
+
+        if not retrieved_docs:
+            latency_ms = (time.time() - start_time) * 1000
+            no_result_text = "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다. 다른 키워드로 질문해 주세요."
+            yield {"type": "token", "content": no_result_text}
+            yield {
+                "type": "meta",
+                "answer": no_result_text,
+                "references": [],
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "latency_ms": latency_ms,
+            }
+            return
+
+        context = "\n\n---\n\n".join([doc["content"] for doc in retrieved_docs])
+        prompt = f"""당신은 병원 매뉴얼 전문 어시스턴트입니다.
+아래 제공된 참고 문서를 기반으로 질문에 정확하게 답변해주세요.
+답변은 반드시 참고 문서의 내용을 근거로 하며, 문서에 없는 내용은 "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
+답변은 한국어로 작성하세요.
+
+[참고 문서]
+{context}
+
+[질문]
+{question}
+
+[답변]"""
+
+        references = [
+            {
+                "source": doc["source"],
+                "page": doc["page"],
+                "content": doc["content"][:300],
+            }
+            for doc in retrieved_docs
+        ]
+
+        for chunk in self.llm.generate_stream(prompt):
+            if chunk["type"] == "token":
+                yield chunk
+            elif chunk["type"] == "stats":
+                latency_ms = (time.time() - start_time) * 1000
+                prompt_tokens = chunk["prompt_eval_count"]
+                completion_tokens = chunk["eval_count"]
+                yield {
+                    "type": "meta",
+                    "references": references,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": prompt_tokens + completion_tokens,
+                    "latency_ms": latency_ms,
+                }
 
 
 # Singleton

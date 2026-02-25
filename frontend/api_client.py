@@ -1,3 +1,5 @@
+import json
+
 import requests
 
 DEFAULT_BASE_URL = "http://localhost:8000"
@@ -96,6 +98,29 @@ class APIClient:
         )
         resp.raise_for_status()
         return resp.json()
+
+    def chat_stream(self, conversation_id: str, question: str):
+        """Stream chat response via SSE. Yields dicts with type 'token', 'meta', or 'done'."""
+        with requests.post(
+            f"{self.base_url}/api/chat/stream",
+            headers=self._headers(),
+            json={"conversation_id": conversation_id, "question": question},
+            stream=True,
+            timeout=300,
+        ) as resp:
+            resp.raise_for_status()
+            for line in resp.iter_lines():
+                if line:
+                    line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                    if line_str.startswith("data: "):
+                        data_str = line_str[6:]
+                        if data_str == "[DONE]":
+                            yield {"type": "done"}
+                            break
+                        try:
+                            yield json.loads(data_str)
+                        except json.JSONDecodeError:
+                            pass
 
     # ── Upload ──
 
