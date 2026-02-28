@@ -89,6 +89,8 @@ class ReferenceInfo(BaseModel):
     source: str
     page: int | None = None
     content: str
+    full_content: str | None = None
+    distance: float | None = None
 
 
 class ChatResponse(BaseModel):

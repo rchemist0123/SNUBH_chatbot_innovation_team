@@ -305,6 +305,8 @@ class RAGPipeline:
                 "source": doc["source"],
                 "page": doc["page"],
                 "content": doc["content"][:300],
+                "full_content": doc["content"],
+                "distance": doc.get("distance"),
             }
             for doc in retrieved_docs
         ]
@@ -369,6 +371,8 @@ class RAGPipeline:
                 "source": doc["source"],
                 "page": doc["page"],
                 "content": doc["content"][:300],
+                "full_content": doc["content"],
+                "distance": doc.get("distance"),
             }
             for doc in retrieved_docs
         ]

@@ -1,6 +1,7 @@
 import json
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from api_client import APIClient
 
@@ -112,6 +113,37 @@ st.markdown("""
     .ref-card .ref-source {
         font-weight: bold;
         color: #333333;
+    }
+    .ref-score {
+        display: inline-block;
+        background: linear-gradient(135deg, #1565C0, #42A5F5);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-left: 8px;
+        vertical-align: middle;
+    }
+    .ref-rank {
+        display: inline-block;
+        background-color: #E3F2FD;
+        color: #1565C0;
+        padding: 1px 7px;
+        border-radius: 10px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+    .ref-content-preview {
+        color: #555;
+        margin-top: 6px;
+        line-height: 1.4;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
     }
 
     /* Sidebar styling */
@@ -319,6 +351,30 @@ def show_select_chatbot():
             st.rerun()
 
 
+# ──────────────────────────── Reference Dialog ────────────────────────────
+
+@st.dialog("📄 참고 문서 상세", width="large")
+def _show_reference_dialog(index: int, ref: dict):
+    source = ref.get("source", "알 수 없음")
+    page = ref.get("page")
+    full_content = ref.get("full_content", ref.get("content", ""))
+    distance = ref.get("distance")
+
+    page_str = f" (p.{page})" if page is not None else ""
+    st.markdown(f"### 📄 {source}{page_str}")
+
+    if distance is not None:
+        similarity = (1.0 - distance) * 100
+        st.markdown(f"**유사도:** {similarity:.1f}%")
+
+    st.divider()
+    st.markdown(full_content)
+
+    if st.button("닫기", key=f"close_ref_{index}", use_container_width=True):
+        st.session_state[f"_show_ref_{index}"] = False
+        st.rerun()
+
+
 # ──────────────────────────── Chat Page ────────────────────────────
 
 def show_chat():
@@ -451,7 +507,29 @@ def show_chat():
                             unsafe_allow_html=True,
                         )
 
-        # Chat input
+            # Auto-scroll: inject JS to scroll chat container to bottom
+            components.html(
+                """
+                <script>
+                    (function() {
+                        // Walk up from the iframe to find the scrollable container
+                        let el = window.frameElement;
+                        while (el) {
+                            el = el.parentElement;
+                            if (el && el.scrollHeight > el.clientHeight + 10
+                                && getComputedStyle(el).overflowY !== 'visible'
+                                && getComputedStyle(el).overflowY !== 'hidden') {
+                                el.scrollTop = el.scrollHeight;
+                                break;
+                            }
+                        }
+                    })();
+                </script>
+                """,
+                height=0,
+            )
+
+        # Chat input (fixed at bottom of chat column)
         question = st.chat_input("매뉴얼에 대해 질문해주세요...")
         if question:
             st.session_state.messages.append({"role": "user", "content": question})
@@ -506,18 +584,46 @@ def show_chat():
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
         if st.session_state.references:
-            for i, ref in enumerate(st.session_state.references):
+            # Sort references by distance (ascending = most similar first)
+            sorted_refs = sorted(
+                st.session_state.references,
+                key=lambda r: r.get("distance", 1.0),
+            )
+            for i, ref in enumerate(sorted_refs):
                 source = ref.get("source", "알 수 없음")
                 page = ref.get("page", "")
                 content = ref.get("content", "")
+                full_content = ref.get("full_content", content)
+                distance = ref.get("distance")
                 page_str = f" (p.{page})" if page is not None else ""
+
+                # Compute similarity score (cosine similarity = 1 - cosine distance)
+                if distance is not None:
+                    similarity = (1.0 - distance) * 100
+                    score_html = f'<span class="ref-score">유사도 {similarity:.1f}%</span>'
+                else:
+                    score_html = ""
+
+                rank_html = f'<span class="ref-rank">#{i + 1}</span>'
+
                 st.markdown(
                     f'<div class="ref-card">'
-                    f'<div class="ref-source">📄 {source}{page_str}</div>'
-                    f"<div>{content}</div>"
+                    f'<div class="ref-source">{rank_html}📄 {source}{page_str}{score_html}</div>'
+                    f'<div class="ref-content-preview">{content}</div>'
                     f"</div>",
                     unsafe_allow_html=True,
                 )
+
+                # Button to show full content in a popup dialog
+                if st.button(f"📋 상세 보기", key=f"ref_detail_{i}"):
+                    st.session_state[f"_show_ref_{i}"] = True
+                    st.rerun()
+
+            # Show dialog for any active reference popup
+            for i, ref in enumerate(sorted_refs):
+                if st.session_state.get(f"_show_ref_{i}", False):
+                    _show_reference_dialog(i, ref)
+                    break
         else:
             st.caption("질문을 하면 관련 문서 근거가 여기에 표시됩니다.")
 
