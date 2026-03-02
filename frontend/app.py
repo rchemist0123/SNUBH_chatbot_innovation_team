@@ -208,6 +208,11 @@ st.markdown("""
         margin: 0.5rem 0 1.5rem;
     }
 
+    /* Bottom padding so fixed chat input doesn't overlap content */
+    .main .block-container {
+        padding-bottom: 80px;
+    }
+
     /* Auth form card */
     .auth-card {
         background: white;
@@ -507,79 +512,41 @@ def show_chat():
                             unsafe_allow_html=True,
                         )
 
-            # Auto-scroll: inject JS to scroll chat container to bottom
+            # Auto-scroll: MutationObserver for continuous scroll during streaming
             components.html(
                 """
                 <script>
                     (function() {
                         // Walk up from the iframe to find the scrollable container
                         let el = window.frameElement;
+                        let scrollContainer = null;
                         while (el) {
                             el = el.parentElement;
                             if (el && el.scrollHeight > el.clientHeight + 10
                                 && getComputedStyle(el).overflowY !== 'visible'
                                 && getComputedStyle(el).overflowY !== 'hidden') {
-                                el.scrollTop = el.scrollHeight;
+                                scrollContainer = el;
                                 break;
                             }
+                        }
+                        if (scrollContainer) {
+                            // Initial scroll to bottom
+                            scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                            // Watch for DOM changes (streaming token updates) and auto-scroll
+                            const observer = new MutationObserver(function() {
+                                scrollContainer.scrollTop = scrollContainer.scrollHeight;
+                            });
+                            observer.observe(scrollContainer, {
+                                childList: true,
+                                subtree: true,
+                                characterData: true,
+                            });
                         }
                     })();
                 </script>
                 """,
                 height=0,
             )
-
-        # Chat input (fixed at bottom of chat column)
-        question = st.chat_input("매뉴얼에 대해 질문해주세요...")
-        if question:
-            st.session_state.messages.append({"role": "user", "content": question})
-
-            stream_meta = {}
-            full_text_parts = []
-
-            with chat_container:
-                st.markdown(
-                    f'<div class="user-message-wrapper"><div class="user-message">{question}</div></div>',
-                    unsafe_allow_html=True,
-                )
-                placeholder = st.empty()
-                placeholder.markdown(
-                    '<div class="loading-indicator">'
-                    '<div class="spinner-dots"><span></span><span></span><span></span></div>'
-                    ' 답변을 준비하고 있습니다...'
-                    '</div>',
-                    unsafe_allow_html=True,
-                )
-                try:
-                    for chunk in api.chat_stream(
-                        st.session_state.current_conversation["id"], question
-                    ):
-                        if chunk["type"] == "token":
-                            full_text_parts.append(chunk["content"])
-                            placeholder.markdown(
-                                f'<div class="assistant-message">{"".join(full_text_parts)}</div>',
-                                unsafe_allow_html=True,
-                            )
-                        elif chunk["type"] == "meta":
-                            stream_meta = {k: v for k, v in chunk.items() if k != "type"}
-                        elif chunk["type"] == "error":
-                            st.error(f"오류: {chunk.get('message', '알 수 없는 오류')}")
-                except Exception as e:
-                    st.error(f"답변 생성에 실패했습니다: {e}")
-
-            if full_text_parts:
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": "".join(full_text_parts),
-                    "prompt_tokens": stream_meta.get("prompt_tokens", 0),
-                    "completion_tokens": stream_meta.get("completion_tokens", 0),
-                    "total_tokens": stream_meta.get("total_tokens", 0),
-                    "latency_ms": stream_meta.get("latency_ms", 0),
-                }
-                st.session_state.messages.append(assistant_msg)
-                st.session_state.references = stream_meta.get("references", [])
-
-            st.rerun()
 
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
@@ -626,6 +593,58 @@ def show_chat():
                     break
         else:
             st.caption("질문을 하면 관련 문서 근거가 여기에 표시됩니다.")
+
+    # Chat input at top level — Streamlit pins this to the viewport bottom
+    question = st.chat_input("매뉴얼에 대해 질문해주세요...")
+    if question:
+        st.session_state.messages.append({"role": "user", "content": question})
+
+        stream_meta = {}
+        full_text_parts = []
+
+        with chat_container:
+            st.markdown(
+                f'<div class="user-message-wrapper"><div class="user-message">{question}</div></div>',
+                unsafe_allow_html=True,
+            )
+            placeholder = st.empty()
+            placeholder.markdown(
+                '<div class="loading-indicator">'
+                '<div class="spinner-dots"><span></span><span></span><span></span></div>'
+                ' 답변을 준비하고 있습니다...'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            try:
+                for chunk in api.chat_stream(
+                    st.session_state.current_conversation["id"], question
+                ):
+                    if chunk["type"] == "token":
+                        full_text_parts.append(chunk["content"])
+                        placeholder.markdown(
+                            f'<div class="assistant-message">{"".join(full_text_parts)}</div>',
+                            unsafe_allow_html=True,
+                        )
+                    elif chunk["type"] == "meta":
+                        stream_meta = {k: v for k, v in chunk.items() if k != "type"}
+                    elif chunk["type"] == "error":
+                        st.error(f"오류: {chunk.get('message', '알 수 없는 오류')}")
+            except Exception as e:
+                st.error(f"답변 생성에 실패했습니다: {e}")
+
+        if full_text_parts:
+            assistant_msg = {
+                "role": "assistant",
+                "content": "".join(full_text_parts),
+                "prompt_tokens": stream_meta.get("prompt_tokens", 0),
+                "completion_tokens": stream_meta.get("completion_tokens", 0),
+                "total_tokens": stream_meta.get("total_tokens", 0),
+                "latency_ms": stream_meta.get("latency_ms", 0),
+            }
+            st.session_state.messages.append(assistant_msg)
+            st.session_state.references = stream_meta.get("references", [])
+
+        st.rerun()
 
 
 # ──────────────────────────── Router ────────────────────────────
