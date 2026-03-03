@@ -213,6 +213,16 @@ st.markdown("""
         padding-bottom: 80px;
     }
 
+    /* Chat & reference panels: equal viewport-responsive height */
+    .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] {
+        height: calc(100vh - 260px) !important;
+        min-height: 400px !important;
+    }
+    .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+        height: 100% !important;
+        max-height: 100% !important;
+    }
+
     /* Auth form card */
     .auth-card {
         background: white;
@@ -512,36 +522,51 @@ def show_chat():
                             unsafe_allow_html=True,
                         )
 
-            # Auto-scroll: MutationObserver for continuous scroll during streaming
+            # Auto-scroll: setInterval polling for reliable real-time scroll during streaming
             components.html(
                 """
                 <script>
                     (function() {
-                        // Walk up from the iframe to find the scrollable container
-                        let el = window.frameElement;
-                        let scrollContainer = null;
-                        while (el) {
-                            el = el.parentElement;
-                            if (el && el.scrollHeight > el.clientHeight + 10
-                                && getComputedStyle(el).overflowY !== 'visible'
-                                && getComputedStyle(el).overflowY !== 'hidden') {
-                                scrollContainer = el;
-                                break;
+                        var sc = null;
+                        // Walk up from iframe to find scrollable chat container
+                        try {
+                            var el = window.frameElement;
+                            while (el) {
+                                el = el.parentElement;
+                                if (el && el.scrollHeight > el.clientHeight + 10) {
+                                    var ov = getComputedStyle(el).overflowY;
+                                    if (ov !== 'visible' && ov !== 'hidden') {
+                                        sc = el;
+                                        break;
+                                    }
+                                }
                             }
+                        } catch(e) {}
+                        // Fallback: search parent document for scrollable container
+                        if (!sc) {
+                            try {
+                                var divs = window.parent.document.querySelectorAll('div');
+                                for (var i = 0; i < divs.length; i++) {
+                                    var d = divs[i];
+                                    if (d.clientHeight >= 300 && d.scrollHeight > d.clientHeight + 10) {
+                                        var s = getComputedStyle(d).overflowY;
+                                        if (s === 'auto' || s === 'scroll') { sc = d; break; }
+                                    }
+                                }
+                            } catch(e) {}
                         }
-                        if (scrollContainer) {
-                            // Initial scroll to bottom
-                            scrollContainer.scrollTop = scrollContainer.scrollHeight;
-                            // Watch for DOM changes (streaming token updates) and auto-scroll
-                            const observer = new MutationObserver(function() {
-                                scrollContainer.scrollTop = scrollContainer.scrollHeight;
-                            });
-                            observer.observe(scrollContainer, {
-                                childList: true,
-                                subtree: true,
-                                characterData: true,
-                            });
-                        }
+                        if (!sc) return;
+                        // Initial scroll to bottom
+                        sc.scrollTop = sc.scrollHeight;
+                        // Poll every 80ms for content height changes → auto-scroll
+                        var lastH = sc.scrollHeight;
+                        setInterval(function() {
+                            var h = sc.scrollHeight;
+                            if (h !== lastH) {
+                                sc.scrollTop = h;
+                                lastH = h;
+                            }
+                        }, 80);
                     })();
                 </script>
                 """,
@@ -550,49 +575,56 @@ def show_chat():
 
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
+        ref_container = st.container(height=500)
+        with ref_container:
+            if st.session_state.references:
+                # Sort references by distance (ascending = most similar first)
+                sorted_refs = sorted(
+                    st.session_state.references,
+                    key=lambda r: r.get("distance", 1.0),
+                )
+                for i, ref in enumerate(sorted_refs):
+                    source = ref.get("source", "알 수 없음")
+                    page = ref.get("page", "")
+                    content = ref.get("content", "")
+                    full_content = ref.get("full_content", content)
+                    distance = ref.get("distance")
+                    page_str = f" (p.{page})" if page is not None else ""
+
+                    # Compute similarity score (cosine similarity = 1 - cosine distance)
+                    if distance is not None:
+                        similarity = (1.0 - distance) * 100
+                        score_html = f'<span class="ref-score">유사도 {similarity:.1f}%</span>'
+                    else:
+                        score_html = ""
+
+                    rank_html = f'<span class="ref-rank">#{i + 1}</span>'
+
+                    st.markdown(
+                        f'<div class="ref-card">'
+                        f'<div class="ref-source">{rank_html}📄 {source}{page_str}{score_html}</div>'
+                        f'<div class="ref-content-preview">{content}</div>'
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                    # Button to show full content in a popup dialog
+                    if st.button(f"📋 상세 보기", key=f"ref_detail_{i}"):
+                        st.session_state[f"_show_ref_{i}"] = True
+                        st.rerun()
+            else:
+                st.caption("질문을 하면 관련 문서 근거가 여기에 표시됩니다.")
+
+        # Show dialog for any active reference popup (outside scroll container)
         if st.session_state.references:
-            # Sort references by distance (ascending = most similar first)
             sorted_refs = sorted(
                 st.session_state.references,
                 key=lambda r: r.get("distance", 1.0),
             )
             for i, ref in enumerate(sorted_refs):
-                source = ref.get("source", "알 수 없음")
-                page = ref.get("page", "")
-                content = ref.get("content", "")
-                full_content = ref.get("full_content", content)
-                distance = ref.get("distance")
-                page_str = f" (p.{page})" if page is not None else ""
-
-                # Compute similarity score (cosine similarity = 1 - cosine distance)
-                if distance is not None:
-                    similarity = (1.0 - distance) * 100
-                    score_html = f'<span class="ref-score">유사도 {similarity:.1f}%</span>'
-                else:
-                    score_html = ""
-
-                rank_html = f'<span class="ref-rank">#{i + 1}</span>'
-
-                st.markdown(
-                    f'<div class="ref-card">'
-                    f'<div class="ref-source">{rank_html}📄 {source}{page_str}{score_html}</div>'
-                    f'<div class="ref-content-preview">{content}</div>'
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-
-                # Button to show full content in a popup dialog
-                if st.button(f"📋 상세 보기", key=f"ref_detail_{i}"):
-                    st.session_state[f"_show_ref_{i}"] = True
-                    st.rerun()
-
-            # Show dialog for any active reference popup
-            for i, ref in enumerate(sorted_refs):
                 if st.session_state.get(f"_show_ref_{i}", False):
                     _show_reference_dialog(i, ref)
                     break
-        else:
-            st.caption("질문을 하면 관련 문서 근거가 여기에 표시됩니다.")
 
     # Chat input at top level — Streamlit pins this to the viewport bottom
     question = st.chat_input("매뉴얼에 대해 질문해주세요...")
