@@ -48,6 +48,23 @@ class APIClient:
         resp.raise_for_status()
         return resp.json()
 
+    def create_chatbot(self, data: dict) -> dict:
+        resp = requests.post(
+            f"{self.base_url}/api/chatbots",
+            headers=self._headers(),
+            json=data,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def delete_chatbot(self, chatbot_id: str) -> dict:
+        resp = requests.delete(
+            f"{self.base_url}/api/chatbots/{chatbot_id}",
+            headers=self._headers(),
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Conversations ──
 
     def list_conversations(self, chatbot_id: str | None = None) -> list[dict]:

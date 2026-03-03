@@ -31,11 +31,31 @@ class LoginRequest(BaseModel):
 
 
 # --- Chatbot ---
+class ChatbotCreate(BaseModel):
+    name: str
+    description: str | None = None
+    icon: str = "🤖"
+    system_prompt: str | None = None
+    temperature: float = 0.7
+    top_k: int = 5
+    distance_threshold: float = 0.4
+    chunk_size: int = 500
+    chunk_overlap: int = 100
+
+
 class ChatbotResponse(BaseModel):
     id: str
     name: str
     description: str | None
     collection_name: str
+    icon: str | None = "🤖"
+    creator_id: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = 0.7
+    top_k: int | None = 5
+    distance_threshold: float | None = 0.4
+    chunk_size: int | None = 500
+    chunk_overlap: int | None = 100
     created_at: datetime
 
     class Config:

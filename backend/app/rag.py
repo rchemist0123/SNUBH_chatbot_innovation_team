@@ -56,10 +56,13 @@ class OllamaLLM:
         self.model = model
         self.base_url = base_url
 
-    def generate(self, prompt: str) -> dict:
+    def generate(self, prompt: str, temperature: float | None = None) -> dict:
+        payload = {"model": self.model, "prompt": prompt, "stream": False}
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
         resp = httpx.post(
             f"{self.base_url}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": False},
+            json=payload,
             timeout=300.0,
         )
         resp.raise_for_status()
@@ -70,12 +73,15 @@ class OllamaLLM:
             "eval_count": data.get("eval_count", 0),
         }
 
-    def generate_stream(self, prompt: str):
+    def generate_stream(self, prompt: str, temperature: float | None = None):
         """Stream tokens from Ollama. Yields dicts with type 'token' or 'stats'."""
+        payload = {"model": self.model, "prompt": prompt, "stream": True}
+        if temperature is not None:
+            payload["options"] = {"temperature": temperature}
         with httpx.stream(
             "POST",
             f"{self.base_url}/api/generate",
-            json={"model": self.model, "prompt": prompt, "stream": True},
+            json=payload,
             timeout=300.0,
         ) as resp:
             resp.raise_for_status()
@@ -162,19 +168,30 @@ class RAGPipeline:
             separators=["\n\n", "\n", ".", "!", "?", ";", ",", " ", ""],
         )
 
-    def ingest_pdf(self, pdf_path: str, collection_name: str) -> int:
+    def ingest_pdf(
+        self, pdf_path: str, collection_name: str,
+        chunk_size: int | None = None, chunk_overlap: int | None = None,
+    ) -> int:
         """Load a PDF, split into chunks, embed, and store in ChromaDB.
         Returns the number of chunks ingested."""
         raw_docs = load_pdf_with_tables(pdf_path)
 
+        # Use custom splitter if custom chunk settings are provided
+        if chunk_size or chunk_overlap:
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=chunk_size or settings.CHUNK_SIZE,
+                chunk_overlap=chunk_overlap or settings.CHUNK_OVERLAP,
+                separators=["\n\n", "\n", ".", "!", "?", ";", ",", " ", ""],
+            )
+        else:
+            splitter = self.text_splitter
+
         chunks = []
         for doc in raw_docs:
             if doc["metadata"]["content_type"] == "table":
-                # Keep tables as whole chunks — splitting destroys table structure
                 chunks.append(doc)
             else:
-                # Split text content
-                split_texts = self.text_splitter.split_text(doc["content"])
+                split_texts = splitter.split_text(doc["content"])
                 for text in split_texts:
                     chunks.append({
                         "content": text,
@@ -222,14 +239,19 @@ class RAGPipeline:
                 total += count
         return total
 
-    def search(self, query: str, collection_name: str, top_k: int = settings.TOP_K) -> list[dict]:
+    def search(
+        self, query: str, collection_name: str,
+        top_k: int | None = None, distance_threshold: float | None = None,
+    ) -> list[dict]:
         """Search the vector store and return relevant chunks."""
+        top_k = top_k or settings.TOP_K
+        distance_threshold = distance_threshold if distance_threshold is not None else settings.DISTANCE_THRESHOLD
+
         collection = self.chroma_client.get_or_create_collection(
             name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 
-        # Empty collection guard
         if collection.count() == 0:
             logger.warning("Collection '%s' is empty.", collection_name)
             return []
@@ -249,8 +271,7 @@ class RAGPipeline:
                 results["metadatas"][0],
                 results["distances"][0],
             ):
-                # Filter by distance threshold
-                if dist > settings.DISTANCE_THRESHOLD:
+                if dist > distance_threshold:
                     continue
                 retrieved.append({
                     "content": doc,
@@ -261,14 +282,28 @@ class RAGPipeline:
                 })
         return retrieved
 
-    def answer(self, question: str, collection_name: str) -> dict:
+    _DEFAULT_SYSTEM_PROMPT = (
+        "당신은 병원 매뉴얼 전문 어시스턴트입니다.\n"
+        "아래 제공된 참고 문서를 기반으로 질문에 정확하게 답변해주세요.\n"
+        '답변은 반드시 참고 문서의 내용을 근거로 하며, 문서에 없는 내용은 "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.\n'
+        "답변은 한국어로 작성하세요."
+    )
+
+    def answer(
+        self, question: str, collection_name: str,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        top_k: int | None = None,
+        distance_threshold: float | None = None,
+    ) -> dict:
         """Full RAG: retrieve context, generate answer, return with metadata."""
         start_time = time.time()
 
-        # Retrieve
-        retrieved_docs = self.search(question, collection_name)
+        retrieved_docs = self.search(
+            question, collection_name,
+            top_k=top_k, distance_threshold=distance_threshold,
+        )
 
-        # If no relevant docs, return immediately without calling LLM
         if not retrieved_docs:
             latency_ms = (time.time() - start_time) * 1000
             return {
@@ -281,12 +316,9 @@ class RAGPipeline:
             }
 
         context = "\n\n---\n\n".join([doc["content"] for doc in retrieved_docs])
+        sys_prompt = system_prompt or self._DEFAULT_SYSTEM_PROMPT
 
-        # Build prompt
-        prompt = f"""당신은 병원 매뉴얼 전문 어시스턴트입니다.
-아래 제공된 참고 문서를 기반으로 질문에 정확하게 답변해주세요.
-답변은 반드시 참고 문서의 내용을 근거로 하며, 문서에 없는 내용은 "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
-답변은 한국어로 작성하세요.
+        prompt = f"""{sys_prompt}
 
 [참고 문서]
 {context}
@@ -296,8 +328,7 @@ class RAGPipeline:
 
 [답변]"""
 
-        # Generate
-        result = self.llm.generate(prompt)
+        result = self.llm.generate(prompt, temperature=temperature)
         latency_ms = (time.time() - start_time) * 1000
 
         references = [
@@ -324,18 +355,25 @@ class RAGPipeline:
         }
 
 
-    def answer_stream(self, question: str, collection_name: str):
+    def answer_stream(
+        self, question: str, collection_name: str,
+        system_prompt: str | None = None,
+        temperature: float | None = None,
+        top_k: int | None = None,
+        distance_threshold: float | None = None,
+    ):
         """Full RAG: retrieve context, then stream the answer token by token.
 
         Yields dicts:
           {"type": "token", "content": str}
           {"type": "meta", "references": [...], "prompt_tokens": int,
            "completion_tokens": int, "total_tokens": int, "latency_ms": float}
-
-        For the "no results" case the meta chunk also includes "answer".
         """
         start_time = time.time()
-        retrieved_docs = self.search(question, collection_name)
+        retrieved_docs = self.search(
+            question, collection_name,
+            top_k=top_k, distance_threshold=distance_threshold,
+        )
 
         if not retrieved_docs:
             latency_ms = (time.time() - start_time) * 1000
@@ -353,10 +391,9 @@ class RAGPipeline:
             return
 
         context = "\n\n---\n\n".join([doc["content"] for doc in retrieved_docs])
-        prompt = f"""당신은 병원 매뉴얼 전문 어시스턴트입니다.
-아래 제공된 참고 문서를 기반으로 질문에 정확하게 답변해주세요.
-답변은 반드시 참고 문서의 내용을 근거로 하며, 문서에 없는 내용은 "제공된 매뉴얼에서 해당 정보를 찾을 수 없습니다."라고 답변하세요.
-답변은 한국어로 작성하세요.
+        sys_prompt = system_prompt or self._DEFAULT_SYSTEM_PROMPT
+
+        prompt = f"""{sys_prompt}
 
 [참고 문서]
 {context}
@@ -377,7 +414,7 @@ class RAGPipeline:
             for doc in retrieved_docs
         ]
 
-        for chunk in self.llm.generate_stream(prompt):
+        for chunk in self.llm.generate_stream(prompt, temperature=temperature):
             if chunk["type"] == "token":
                 yield chunk
             elif chunk["type"] == "stats":
