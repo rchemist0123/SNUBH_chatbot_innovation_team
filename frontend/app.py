@@ -720,19 +720,12 @@ def show_chat():
         # Chat messages
         chat_container = st.container(height=500)
         with chat_container:
-            # Find last user message index for scroll marker
-            _last_user_idx = -1
-            for _i, _m in enumerate(st.session_state.messages):
-                if _m["role"] == "user":
-                    _last_user_idx = _i
-
-            for idx, msg in enumerate(st.session_state.messages):
+            for msg in st.session_state.messages:
                 role = msg["role"]
                 content = msg["content"]
                 if role == "user":
-                    marker = ' data-last-question="1"' if idx == _last_user_idx else ""
                     st.markdown(
-                        f'<div class="user-message-wrapper"{marker}><div class="user-message">{content}</div></div>',
+                        f'<div class="user-message-wrapper"><div class="user-message">{content}</div></div>',
                         unsafe_allow_html=True,
                     )
                 else:
@@ -778,29 +771,38 @@ def show_chat():
                         }
                         if (!sc) return;
 
-                        // Scroll so that element appears at the top of the container
-                        function scrollToEl(el) {
-                            var eR = el.getBoundingClientRect();
+                        // Find user messages via parent document (more reliable than sc.querySelectorAll)
+                        function getUserMsgs() {
+                            try { return window.parent.document.querySelectorAll('.user-message-wrapper'); }
+                            catch(e) {}
+                            try { return sc.querySelectorAll('.user-message-wrapper'); }
+                            catch(e) {}
+                            return [];
+                        }
+
+                        // Scroll container so element is at the top
+                        function scrollToLastQ() {
+                            var msgs = getUserMsgs();
+                            if (msgs.length === 0) { sc.scrollTop = sc.scrollHeight; return 0; }
+                            var last = msgs[msgs.length - 1];
+                            var mR = last.getBoundingClientRect();
                             var sR = sc.getBoundingClientRect();
-                            sc.scrollTop += (eR.top - sR.top);
+                            sc.scrollTop += (mR.top - sR.top);
+                            return msgs.length;
                         }
 
-                        // Find last question marker and scroll to it
-                        var markers = sc.querySelectorAll('[data-last-question]');
-                        var numMarkers = markers.length;
-                        if (numMarkers > 0) {
-                            scrollToEl(markers[numMarkers - 1]);
-                        } else {
-                            sc.scrollTop = sc.scrollHeight;
-                        }
+                        // Get initial count before scrolling
+                        var numQ = getUserMsgs().length;
+                        // Delay initial scroll slightly so Streamlit finishes rendering
+                        setTimeout(function() { scrollToLastQ(); }, 100);
 
-                        // Poll: detect new question markers + auto-scroll streaming
+                        // Poll: detect new questions + auto-scroll streaming
                         var lastH = sc.scrollHeight;
                         setInterval(function() {
-                            var ms = sc.querySelectorAll('[data-last-question]');
-                            if (ms.length > numMarkers) {
-                                numMarkers = ms.length;
-                                scrollToEl(ms[ms.length - 1]);
+                            var current = getUserMsgs().length;
+                            if (current > numQ) {
+                                numQ = current;
+                                scrollToLastQ();
                                 lastH = sc.scrollHeight;
                                 return;
                             }
@@ -879,7 +881,7 @@ def show_chat():
 
         with chat_container:
             st.markdown(
-                f'<div class="user-message-wrapper" data-last-question="1"><div class="user-message">{question}</div></div>',
+                f'<div class="user-message-wrapper"><div class="user-message">{question}</div></div>',
                 unsafe_allow_html=True,
             )
             placeholder = st.empty()
