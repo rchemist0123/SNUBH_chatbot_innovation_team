@@ -308,6 +308,8 @@ st.markdown("""
         color: #999 !important;
         font-size: 0.8rem !important;
         padding: 6px 4px !important;
+        text-align: center !important;
+        justify-content: center !important;
     }
     section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child .stButton > button:hover {
         color: #e53935 !important;
