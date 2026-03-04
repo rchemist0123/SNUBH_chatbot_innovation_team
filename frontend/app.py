@@ -272,11 +272,18 @@ st.markdown("""
         min-height: 0 !important;
         height: auto !important;
         line-height: 1.4 !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button > div {
+        width: 100% !important;
+        text-align: left !important;
     }
     section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button > div > p {
         white-space: nowrap !important;
         overflow: hidden !important;
         text-overflow: ellipsis !important;
+        text-align: left !important;
     }
     section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button:hover {
         background-color: #D6E8FA !important;
@@ -290,6 +297,8 @@ st.markdown("""
         min-height: 0 !important;
         padding: 6px 10px !important;
         border-radius: 6px !important;
+        text-align: left !important;
+        justify-content: flex-start !important;
     }
     section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button[kind="primary"]:hover {
         background-color: #B0D4F1 !important;
