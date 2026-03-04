@@ -257,6 +257,54 @@ st.markdown("""
         font-size: 0.8rem;
     }
 
+    /* ── Conversation history items (buttons inside columns in sidebar) ── */
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] {
+        gap: 0 !important;
+        margin-bottom: 2px !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        padding: 6px 10px !important;
+        margin: 0 !important;
+        border-radius: 6px !important;
+        font-size: 0.85rem !important;
+        min-height: 0 !important;
+        height: auto !important;
+        line-height: 1.4 !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button > div > p {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button:hover {
+        background-color: #D6E8FA !important;
+    }
+    /* Active conversation */
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button[kind="primary"] {
+        background-color: #BBDEFB !important;
+        color: #0D47A1 !important;
+        border: none !important;
+        font-weight: 600 !important;
+        min-height: 0 !important;
+        padding: 6px 10px !important;
+        border-radius: 6px !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] .stButton > button[kind="primary"]:hover {
+        background-color: #B0D4F1 !important;
+    }
+    /* Delete button */
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child .stButton > button {
+        color: #999 !important;
+        font-size: 0.8rem !important;
+        padding: 6px 4px !important;
+    }
+    section[data-testid="stSidebar"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:last-child .stButton > button:hover {
+        color: #e53935 !important;
+        background-color: rgba(229, 57, 53, 0.08) !important;
+    }
+
     /* Form section styling */
     .form-section {
         background: white;
@@ -661,14 +709,21 @@ def show_chat():
             conversations = []
 
         for conv in conversations:
-            col_btn, col_del = st.columns([5, 1])
-            with col_btn:
-                is_active = (
-                    st.session_state.current_conversation
-                    and st.session_state.current_conversation["id"] == conv["id"]
-                )
-                label = f"{'▶ ' if is_active else ''}{conv['title'] or '새 대화'}"
-                if st.button(label, key=f"conv_{conv['id']}", use_container_width=True):
+            is_active = (
+                st.session_state.current_conversation
+                and st.session_state.current_conversation["id"] == conv["id"]
+            )
+            title = conv["title"] or "새 대화"
+            btn_type = "primary" if is_active else "secondary"
+
+            col_title, col_del = st.columns([7, 1])
+            with col_title:
+                if st.button(
+                    title,
+                    key=f"conv_{conv['id']}",
+                    use_container_width=True,
+                    type=btn_type,
+                ):
                     try:
                         full_conv = api.get_conversation(conv["id"])
                         st.session_state.current_conversation = full_conv
@@ -678,7 +733,9 @@ def show_chat():
                         for msg in reversed(full_conv.get("messages", [])):
                             if msg["role"] == "assistant" and msg.get("references"):
                                 try:
-                                    st.session_state.references = json.loads(msg["references"])
+                                    st.session_state.references = json.loads(
+                                        msg["references"]
+                                    )
                                 except Exception:
                                     pass
                                 break
@@ -686,12 +743,13 @@ def show_chat():
                     except Exception:
                         st.error("대화 불러오기 실패")
             with col_del:
-                if st.button("🗑", key=f"del_{conv['id']}"):
+                if st.button("✕", key=f"del_{conv['id']}"):
                     try:
                         api.delete_conversation(conv["id"])
                         if (
                             st.session_state.current_conversation
-                            and st.session_state.current_conversation["id"] == conv["id"]
+                            and st.session_state.current_conversation["id"]
+                            == conv["id"]
                         ):
                             st.session_state.current_conversation = None
                             st.session_state.messages = []
