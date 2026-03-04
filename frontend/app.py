@@ -223,6 +223,18 @@ st.markdown("""
         max-height: 100% !important;
     }
 
+    /* Auth page: don't force viewport height on auth columns */
+    .stMainBlockContainer [data-testid="stColumn"]:has(.auth-card) [data-testid="stVerticalBlockBorderWrapper"],
+    .stMainBlockContainer [data-testid="stColumn"]:has(.main-header) [data-testid="stVerticalBlockBorderWrapper"] {
+        height: auto !important;
+        min-height: auto !important;
+    }
+    .stMainBlockContainer [data-testid="stColumn"]:has(.auth-card) [data-testid="stVerticalBlockBorderWrapper"] > div,
+    .stMainBlockContainer [data-testid="stColumn"]:has(.main-header) [data-testid="stVerticalBlockBorderWrapper"] > div {
+        height: auto !important;
+        max-height: none !important;
+    }
+
     /* Auth form card */
     .auth-card {
         background: white;
