@@ -15,6 +15,7 @@ from .database import Base, engine, get_db, SessionLocal
 from .models import Chatbot, Conversation, Message, User
 from .rag import rag_pipeline
 from .schemas import (
+    ChatbotCreate,
     ChatbotResponse,
     ChatRequest,
     ChatResponse,
@@ -74,22 +75,25 @@ def _seed_chatbot():
             db.commit()
             logger.info("Chatbot updated: %s (%s)", chatbot.name, chatbot.collection_name)
 
-        # Cleanup: remove any other duplicate chatbot entries that are not the canonical one.
-        # This handles cases where the DB accumulated extra rows from the old manual-creation UI.
-        duplicates = db.query(Chatbot).filter(Chatbot.id != chatbot.id).all()
+        # Cleanup: remove duplicate *system* chatbot entries (creator_id IS NULL)
+        # that are not the canonical one. User-created chatbots are preserved.
+        duplicates = (
+            db.query(Chatbot)
+            .filter(Chatbot.id != chatbot.id, Chatbot.creator_id.is_(None))
+            .all()
+        )
         if duplicates:
             for dup in duplicates:
                 logger.warning(
-                    "Removing duplicate chatbot: id=%s name=%s collection=%s",
+                    "Removing duplicate system chatbot: id=%s name=%s collection=%s",
                     dup.id, dup.name, dup.collection_name,
                 )
-                # Reassign conversations to the canonical chatbot before deleting
                 db.query(Conversation).filter(
                     Conversation.chatbot_id == dup.id
                 ).update({"chatbot_id": chatbot.id}, synchronize_session=False)
                 db.delete(dup)
             db.commit()
-            logger.info("Removed %d duplicate chatbot(s).", len(duplicates))
+            logger.info("Removed %d duplicate system chatbot(s).", len(duplicates))
 
         # Auto-ingest manuals if directory exists and collection is empty
         manuals_dir = settings.MANUALS_DIR
@@ -163,11 +167,96 @@ def me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
-# ──────────────────────────── Chatbots (read-only) ────────────────────────────
+# ──────────────────────────── Chatbots ────────────────────────────
 
 @app.get("/api/chatbots", response_model=list[ChatbotResponse])
 def list_chatbots(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
     return db.query(Chatbot).all()
+
+
+def _sanitize_collection_name(name: str) -> str:
+    """Create a valid ChromaDB collection name from a chatbot name."""
+    import re
+    import uuid as _uuid
+    # Replace non-alphanumeric with underscores, prefix to ensure validity
+    sanitized = re.sub(r"[^a-zA-Z0-9가-힣_]", "_", name).strip("_")
+    if not sanitized:
+        sanitized = "custom"
+    # Append short UUID to ensure uniqueness
+    short_id = _uuid.uuid4().hex[:8]
+    return f"custom_{sanitized}_{short_id}"
+
+
+@app.post("/api/chatbots", response_model=ChatbotResponse)
+def create_chatbot(
+    body: ChatbotCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    collection_name = _sanitize_collection_name(body.name)
+    chatbot = Chatbot(
+        name=body.name,
+        description=body.description,
+        collection_name=collection_name,
+        icon=body.icon or "🤖",
+        creator_id=current_user.id,
+        system_prompt=body.system_prompt,
+        temperature=body.temperature,
+        top_k=body.top_k,
+        distance_threshold=body.distance_threshold,
+        chunk_size=body.chunk_size,
+        chunk_overlap=body.chunk_overlap,
+    )
+    db.add(chatbot)
+    db.commit()
+    db.refresh(chatbot)
+
+    # Create the ChromaDB collection eagerly
+    rag_pipeline.chroma_client.get_or_create_collection(
+        name=collection_name,
+        metadata={"hnsw:space": "cosine"},
+    )
+
+    logger.info("Custom chatbot created: %s by user %s", chatbot.name, current_user.id)
+    return chatbot
+
+
+@app.delete("/api/chatbots/{chatbot_id}")
+def delete_chatbot(
+    chatbot_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    chatbot = db.query(Chatbot).filter(Chatbot.id == chatbot_id).first()
+    if not chatbot:
+        raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
+    if chatbot.creator_id is None:
+        raise HTTPException(status_code=403, detail="시스템 챗봇은 삭제할 수 없습니다.")
+    if chatbot.creator_id != current_user.id:
+        raise HTTPException(status_code=403, detail="본인이 만든 챗봇만 삭제할 수 있습니다.")
+
+    # Delete associated conversations and messages
+    conversations = db.query(Conversation).filter(Conversation.chatbot_id == chatbot_id).all()
+    for conv in conversations:
+        db.query(Message).filter(Message.conversation_id == conv.id).delete()
+        db.delete(conv)
+
+    # Delete ChromaDB collection
+    try:
+        rag_pipeline.chroma_client.delete_collection(chatbot.collection_name)
+    except Exception as e:
+        logger.warning("Failed to delete ChromaDB collection %s: %s", chatbot.collection_name, e)
+
+    # Delete uploaded files
+    chatbot_data_dir = os.path.join(settings.MANUALS_DIR, chatbot.collection_name)
+    if os.path.isdir(chatbot_data_dir):
+        import shutil
+        shutil.rmtree(chatbot_data_dir, ignore_errors=True)
+
+    db.delete(chatbot)
+    db.commit()
+    logger.info("Custom chatbot deleted: %s by user %s", chatbot.name, current_user.id)
+    return {"message": "챗봇이 삭제되었습니다."}
 
 
 # ──────────────────────────── PDF Ingestion ────────────────────────────
@@ -181,7 +270,11 @@ def ingest_pdfs(
     chatbot = db.query(Chatbot).filter(Chatbot.id == chatbot_id).first()
     if not chatbot:
         raise HTTPException(status_code=404, detail="챗봇을 찾을 수 없습니다.")
-    manuals_dir = settings.MANUALS_DIR
+    # Use per-chatbot directory for custom chatbots, global for system chatbot
+    if chatbot.creator_id:
+        manuals_dir = os.path.join(settings.MANUALS_DIR, chatbot.collection_name)
+    else:
+        manuals_dir = settings.MANUALS_DIR
     if not os.path.isdir(manuals_dir):
         os.makedirs(manuals_dir, exist_ok=True)
         raise HTTPException(
@@ -205,13 +298,23 @@ def upload_pdf(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="PDF 파일만 업로드할 수 있습니다.")
 
-    manuals_dir = settings.MANUALS_DIR
+    # Use per-chatbot directory for custom chatbots
+    if chatbot.creator_id:
+        manuals_dir = os.path.join(settings.MANUALS_DIR, chatbot.collection_name)
+    else:
+        manuals_dir = settings.MANUALS_DIR
     os.makedirs(manuals_dir, exist_ok=True)
     filepath = os.path.join(manuals_dir, file.filename)
     with open(filepath, "wb") as f:
         f.write(file.file.read())
 
-    count = rag_pipeline.ingest_pdf(filepath, chatbot.collection_name)
+    # Use chatbot-specific chunk settings if available
+    chunk_size = chatbot.chunk_size or settings.CHUNK_SIZE
+    chunk_overlap = chatbot.chunk_overlap or settings.CHUNK_OVERLAP
+    count = rag_pipeline.ingest_pdf(
+        filepath, chatbot.collection_name,
+        chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+    )
     return {"message": f"{file.filename}: {count}개 청크가 색인되었습니다.", "chunks": count}
 
 
@@ -317,8 +420,15 @@ def chat(
     )
     db.add(user_msg)
 
-    # RAG answer
-    result = rag_pipeline.answer(body.question, chatbot.collection_name)
+    # RAG answer with chatbot-specific settings
+    result = rag_pipeline.answer(
+        body.question,
+        chatbot.collection_name,
+        system_prompt=chatbot.system_prompt,
+        temperature=chatbot.temperature,
+        top_k=chatbot.top_k,
+        distance_threshold=chatbot.distance_threshold,
+    )
 
     # Save assistant message
     assistant_msg = Message(
@@ -375,6 +485,10 @@ def chat_stream_endpoint(
 
     conv_id = conv.id
     chatbot_collection = chatbot.collection_name
+    chatbot_system_prompt = chatbot.system_prompt
+    chatbot_temperature = chatbot.temperature
+    chatbot_top_k = chatbot.top_k
+    chatbot_distance_threshold = chatbot.distance_threshold
 
     # Save user message before streaming starts
     user_msg = Message(
@@ -399,7 +513,13 @@ def chat_stream_endpoint(
         }
 
         try:
-            for chunk in rag_pipeline.answer_stream(body.question, chatbot_collection):
+            for chunk in rag_pipeline.answer_stream(
+                body.question, chatbot_collection,
+                system_prompt=chatbot_system_prompt,
+                temperature=chatbot_temperature,
+                top_k=chatbot_top_k,
+                distance_threshold=chatbot_distance_threshold,
+            ):
                 if chunk["type"] == "token":
                     full_answer_parts.append(chunk["content"])
                     yield f"data: {json.dumps({'type': 'token', 'content': chunk['content']}, ensure_ascii=False)}\n\n"

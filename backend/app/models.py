@@ -30,8 +30,17 @@ class Chatbot(Base):
     name = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
     collection_name = Column(String(100), unique=True, nullable=False)
+    icon = Column(String(10), nullable=True, default="🤖")
+    creator_id = Column(String, ForeignKey("users.id"), nullable=True)  # NULL = system chatbot
+    system_prompt = Column(Text, nullable=True)
+    temperature = Column(Float, nullable=True, default=0.7)
+    top_k = Column(Integer, nullable=True, default=5)
+    distance_threshold = Column(Float, nullable=True, default=0.4)
+    chunk_size = Column(Integer, nullable=True, default=500)
+    chunk_overlap = Column(Integer, nullable=True, default=100)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    creator = relationship("User", foreign_keys=[creator_id])
     conversations = relationship("Conversation", back_populates="chatbot")
 
 

@@ -232,6 +232,45 @@ st.markdown("""
         box-shadow: 0 4px 20px rgba(21, 101, 192, 0.08);
         margin-top: 1rem;
     }
+
+    /* Create chatbot card - dashed border style */
+    .create-chatbot-card {
+        border: 2px dashed #90CAF9 !important;
+        background: #F5F9FF !important;
+    }
+    .create-chatbot-card:hover {
+        border-color: #1565C0 !important;
+        background: #E3F2FD !important;
+    }
+
+    /* Delete button for custom chatbots */
+    .chatbot-delete-btn {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        background: rgba(0,0,0,0.05);
+        border: none;
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        font-size: 0.8rem;
+    }
+
+    /* Form section styling */
+    .form-section {
+        background: white;
+        border: 1px solid #BBDEFB;
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .form-section-title {
+        color: #1565C0;
+        font-weight: 600;
+        font-size: 1rem;
+        margin-bottom: 0.8rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -248,7 +287,7 @@ def init_state():
         "current_conversation": None,
         "messages": [],
         "references": [],
-        "page": "login",  # login | register | select_chatbot | chat
+        "page": "login",  # login | register | select_chatbot | create_chatbot | chat
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -324,7 +363,7 @@ def show_register():
 def show_select_chatbot():
     api: APIClient = st.session_state.api
 
-    # Header bar (no logout button here)
+    # Header bar
     st.markdown('<div class="main-header"><h2>🏥 병원 매뉴얼 RAG 챗봇</h2></div>', unsafe_allow_html=True)
 
     try:
@@ -332,21 +371,28 @@ def show_select_chatbot():
     except Exception:
         chatbots = []
 
-    # Center the content with side padding - half of original width ([1,4,1] → [2,2,2])
     _, center, _ = st.columns([2, 2, 2])
     with center:
         st.markdown('<p class="section-title">서비스를 선택하세요</p>', unsafe_allow_html=True)
         st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
 
-        if not chatbots:
-            st.info("현재 이용 가능한 챗봇 서비스가 없습니다. 관리자에게 문의해주세요.")
-        else:
-            # Display chatbot cards as clickable buttons - no separate 시작하기 button
-            num_cols = min(len(chatbots), 3)
-            cols = st.columns(num_cols)
-            for i, cb in enumerate(chatbots):
-                with cols[i % num_cols]:
-                    label = f"🤖\n\n**{cb['name']}**"
+        # All items = existing chatbots + "create new" button
+        all_items = chatbots + [{"_create_new": True}]
+        num_cols = min(len(all_items), 3)
+        cols = st.columns(num_cols)
+
+        for i, item in enumerate(all_items):
+            with cols[i % num_cols]:
+                if item.get("_create_new"):
+                    # "Create new chatbot" card
+                    create_label = "➕\n\n**신규 챗봇 만들기**\n\n나만의 챗봇을 만들어보세요"
+                    if st.button(create_label, key="create_new_chatbot", use_container_width=True, type="primary"):
+                        st.session_state.page = "create_chatbot"
+                        st.rerun()
+                else:
+                    cb = item
+                    icon = cb.get("icon") or "🤖"
+                    label = f"{icon}\n\n**{cb['name']}**"
                     if cb.get("description"):
                         label += f"\n\n{cb['description']}"
                     if st.button(label, key=f"select_{cb['id']}", use_container_width=True, type="primary"):
@@ -357,6 +403,15 @@ def show_select_chatbot():
                         st.session_state.page = "chat"
                         st.rerun()
 
+                    # Delete button for user-created chatbots
+                    if cb.get("creator_id"):
+                        if st.button("🗑 삭제", key=f"del_chatbot_{cb['id']}", use_container_width=True):
+                            try:
+                                api.delete_chatbot(cb["id"])
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"삭제 실패: {e}")
+
     # Logout button at bottom-right
     _, col_logout = st.columns([5, 1])
     with col_logout:
@@ -364,6 +419,169 @@ def show_select_chatbot():
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
+
+
+# ──────────────────────────── Create Chatbot Page ────────────────────────────
+
+def show_create_chatbot():
+    api: APIClient = st.session_state.api
+
+    st.markdown('<div class="main-header"><h2>🏥 신규 챗봇 만들기</h2></div>', unsafe_allow_html=True)
+
+    _, center, _ = st.columns([1, 3, 1])
+    with center:
+        # Back button
+        if st.button("← 서비스 목록으로 돌아가기", key="back_to_select"):
+            st.session_state.page = "select_chatbot"
+            st.rerun()
+
+        st.markdown("")
+
+        # ── Section 1: Basic Info ──
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
+        st.markdown('<p class="form-section-title">📋 기본 정보</p>', unsafe_allow_html=True)
+
+        chatbot_name = st.text_input("챗봇 이름 *", placeholder="예: 인사팀 매뉴얼 봇")
+        chatbot_description = st.text_area(
+            "챗봇 설명",
+            placeholder="예: 인사팀 관련 매뉴얼 기반 질의응답 서비스",
+            height=80,
+        )
+
+        icon_options = ["🤖", "📚", "🏥", "💼", "📊", "🔬", "💡", "🎯", "📋", "⚙️"]
+        chatbot_icon = st.selectbox("아이콘", options=icon_options, index=0)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Section 2: File Upload ──
+        st.markdown('<div class="form-section">', unsafe_allow_html=True)
+        st.markdown('<p class="form-section-title">📄 자료 업로드</p>', unsafe_allow_html=True)
+        st.caption("챗봇이 참고할 PDF 파일을 업로드하세요. 여러 파일을 동시에 업로드할 수 있습니다.")
+
+        uploaded_files = st.file_uploader(
+            "PDF 파일 업로드",
+            type=["pdf"],
+            accept_multiple_files=True,
+            label_visibility="collapsed",
+        )
+        if uploaded_files:
+            st.success(f"{len(uploaded_files)}개 파일이 선택되었습니다.")
+            for f in uploaded_files:
+                st.caption(f"  - {f.name} ({f.size / 1024:.1f} KB)")
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Section 3: Customization (Advanced) ──
+        with st.expander("⚙️ 고급 설정 (선택 사항)", expanded=False):
+            st.markdown('<div class="form-section">', unsafe_allow_html=True)
+
+            system_prompt = st.text_area(
+                "시스템 프롬프트",
+                value="",
+                placeholder=(
+                    "챗봇의 역할과 답변 스타일을 지정합니다.\n"
+                    "예: 당신은 인사팀 전문 어시스턴트입니다. "
+                    "직원들의 인사 관련 질문에 친절하고 정확하게 답변해주세요."
+                ),
+                height=120,
+                help="비워두면 기본 시스템 프롬프트가 사용됩니다.",
+            )
+
+            col_t, col_k = st.columns(2)
+            with col_t:
+                temperature = st.slider(
+                    "Temperature (창의성)",
+                    min_value=0.0,
+                    max_value=1.0,
+                    value=0.7,
+                    step=0.1,
+                    help="낮을수록 정확하고 일관된 답변, 높을수록 창의적인 답변",
+                )
+            with col_k:
+                top_k = st.slider(
+                    "검색 결과 수 (Top-K)",
+                    min_value=1,
+                    max_value=10,
+                    value=5,
+                    help="질문에 대해 검색할 관련 문서 수",
+                )
+
+            col_d, col_cs = st.columns(2)
+            with col_d:
+                distance_threshold = st.slider(
+                    "유사도 임계값",
+                    min_value=0.1,
+                    max_value=1.0,
+                    value=0.4,
+                    step=0.05,
+                    help="낮을수록 더 관련성 높은 문서만 사용 (엄격), 높을수록 더 넓은 범위 검색 (관대)",
+                )
+            with col_cs:
+                chunk_size = st.slider(
+                    "청크 크기",
+                    min_value=200,
+                    max_value=1500,
+                    value=500,
+                    step=50,
+                    help="문서를 나누는 단위 크기. 작을수록 세밀, 클수록 넓은 문맥",
+                )
+
+            chunk_overlap = st.slider(
+                "청크 겹침",
+                min_value=0,
+                max_value=300,
+                value=100,
+                step=25,
+                help="인접 청크 간 겹치는 글자 수. 문맥 연결을 위해 적절한 값 설정",
+            )
+
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # ── Create Button ──
+        st.markdown("")
+        if st.button("🚀 챗봇 생성", use_container_width=True, type="primary"):
+            if not chatbot_name or not chatbot_name.strip():
+                st.error("챗봇 이름을 입력해주세요.")
+            elif not uploaded_files:
+                st.error("최소 1개의 PDF 파일을 업로드해주세요.")
+            else:
+                with st.spinner("챗봇을 생성하고 있습니다..."):
+                    try:
+                        # Step 1: Create the chatbot
+                        chatbot_data = {
+                            "name": chatbot_name.strip(),
+                            "description": chatbot_description.strip() if chatbot_description else None,
+                            "icon": chatbot_icon,
+                            "system_prompt": system_prompt.strip() if system_prompt else None,
+                            "temperature": temperature,
+                            "top_k": top_k,
+                            "distance_threshold": distance_threshold,
+                            "chunk_size": chunk_size,
+                            "chunk_overlap": chunk_overlap,
+                        }
+                        new_chatbot = api.create_chatbot(chatbot_data)
+
+                        # Step 2: Upload PDF files
+                        total_chunks = 0
+                        for f in uploaded_files:
+                            result = api.upload_pdf(new_chatbot["id"], f)
+                            total_chunks += result.get("chunks", 0)
+
+                        st.success(
+                            f"챗봇 '{chatbot_name}'이 생성되었습니다! "
+                            f"({len(uploaded_files)}개 파일, {total_chunks}개 청크 색인)"
+                        )
+                        st.balloons()
+
+                        # Navigate to the new chatbot
+                        st.session_state.current_chatbot = new_chatbot
+                        st.session_state.current_conversation = None
+                        st.session_state.messages = []
+                        st.session_state.references = []
+                        st.session_state.page = "chat"
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"챗봇 생성에 실패했습니다: {e}")
 
 
 # ──────────────────────────── Reference Dialog ────────────────────────────
@@ -413,7 +631,8 @@ def show_chat():
         st.divider()
 
         # Current chatbot info
-        st.markdown(f"**🤖 {chatbot['name']}**")
+        icon = chatbot.get("icon") or "🤖"
+        st.markdown(f"**{icon} {chatbot['name']}**")
         if st.button("← 서비스 목록", use_container_width=True):
             st.session_state.current_chatbot = None
             st.session_state.current_conversation = None
@@ -687,5 +906,7 @@ elif st.session_state.page == "register" and not st.session_state.logged_in:
     show_register()
 elif st.session_state.page == "select_chatbot":
     show_select_chatbot()
+elif st.session_state.page == "create_chatbot":
+    show_create_chatbot()
 else:
     show_chat()
