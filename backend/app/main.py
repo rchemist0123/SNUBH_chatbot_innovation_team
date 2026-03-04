@@ -34,6 +34,44 @@ logger = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 
 
+# ──────────────────────────── DB Migration ────────────────────────────
+
+def _migrate_chatbots_table():
+    """Add new columns to the chatbots table if they don't exist yet.
+
+    SQLAlchemy's create_all() only creates new tables — it does NOT alter
+    existing ones.  This lightweight migration inspects the live schema and
+    adds any missing columns so that the app works with databases created
+    before the custom-chatbot feature was introduced.
+    """
+    from sqlalchemy import inspect as sa_inspect, text
+
+    inspector = sa_inspect(engine)
+    existing = {col["name"] for col in inspector.get_columns("chatbots")}
+
+    # (column_name, SQL type, default_value)
+    new_columns = [
+        ("icon", "VARCHAR(10)", "'🤖'"),
+        ("creator_id", "VARCHAR", "NULL"),
+        ("system_prompt", "TEXT", "NULL"),
+        ("temperature", "FLOAT", "0.7"),
+        ("top_k", "INTEGER", "5"),
+        ("distance_threshold", "FLOAT", "0.4"),
+        ("chunk_size", "INTEGER", "500"),
+        ("chunk_overlap", "INTEGER", "100"),
+    ]
+
+    with engine.begin() as conn:
+        for col_name, col_type, default in new_columns:
+            if col_name not in existing:
+                stmt = f"ALTER TABLE chatbots ADD COLUMN {col_name} {col_type} DEFAULT {default}"
+                conn.execute(text(stmt))
+                logger.info("Migrated chatbots table: added column '%s'", col_name)
+
+
+_migrate_chatbots_table()
+
+
 # ──────────────────────────── Startup ────────────────────────────
 
 def _seed_chatbot():
