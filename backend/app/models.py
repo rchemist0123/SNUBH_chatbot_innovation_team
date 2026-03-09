@@ -38,6 +38,7 @@ class Chatbot(Base):
     distance_threshold = Column(Float, nullable=True, default=0.4)
     chunk_size = Column(Integer, nullable=True, default=500)
     chunk_overlap = Column(Integer, nullable=True, default=100)
+    llm_model = Column(String(100), nullable=True)  # Ollama model name; NULL = use server default
     created_at = Column(DateTime, default=datetime.utcnow)
 
     creator = relationship("User", foreign_keys=[creator_id])

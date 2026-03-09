@@ -295,6 +295,7 @@ class RAGPipeline:
         temperature: float | None = None,
         top_k: int | None = None,
         distance_threshold: float | None = None,
+        llm_model: str | None = None,
     ) -> dict:
         """Full RAG: retrieve context, generate answer, return with metadata."""
         start_time = time.time()
@@ -328,7 +329,8 @@ class RAGPipeline:
 
 [답변]"""
 
-        result = self.llm.generate(prompt, temperature=temperature)
+        llm = OllamaLLM(model=llm_model) if llm_model else self.llm
+        result = llm.generate(prompt, temperature=temperature)
         latency_ms = (time.time() - start_time) * 1000
 
         references = [
@@ -361,6 +363,7 @@ class RAGPipeline:
         temperature: float | None = None,
         top_k: int | None = None,
         distance_threshold: float | None = None,
+        llm_model: str | None = None,
     ):
         """Full RAG: retrieve context, then stream the answer token by token.
 
@@ -414,7 +417,8 @@ class RAGPipeline:
             for doc in retrieved_docs
         ]
 
-        for chunk in self.llm.generate_stream(prompt, temperature=temperature):
+        llm = OllamaLLM(model=llm_model) if llm_model else self.llm
+        for chunk in llm.generate_stream(prompt, temperature=temperature):
             if chunk["type"] == "token":
                 yield chunk
             elif chunk["type"] == "stats":
