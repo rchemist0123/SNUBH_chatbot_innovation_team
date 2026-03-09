@@ -139,6 +139,17 @@ class APIClient:
                         except json.JSONDecodeError:
                             pass
 
+    # ── Ollama Models ──
+
+    def list_ollama_models(self) -> dict:
+        resp = requests.get(
+            f"{self.base_url}/api/ollama/models",
+            headers=self._headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ── Upload ──
 
     def upload_pdf(self, chatbot_id: str, file) -> dict:

@@ -368,6 +368,17 @@ def init_state():
 init_state()
 
 
+def settings_default_model() -> str:
+    """Fetch the default LLM model name from the backend (cached in session)."""
+    if "_default_llm_model" not in st.session_state:
+        try:
+            data = st.session_state.api.list_ollama_models()
+            st.session_state["_default_llm_model"] = data.get("default", "llama3")
+        except Exception:
+            st.session_state["_default_llm_model"] = "llama3"
+    return st.session_state["_default_llm_model"]
+
+
 # ──────────────────────────── Auth Pages ────────────────────────────
 
 def show_login():
@@ -522,6 +533,30 @@ def show_create_chatbot():
         icon_options = ["🤖", "📚", "🏥", "💼", "📊", "🔬", "💡", "🎯", "📋", "⚙️"]
         chatbot_icon = st.selectbox("아이콘", options=icon_options, index=0)
 
+        # LLM Model selection
+        try:
+            models_data = api.list_ollama_models()
+            available_models = [m["name"] for m in models_data.get("models", [])]
+            default_model = models_data.get("default", "")
+        except Exception:
+            available_models = []
+            default_model = ""
+
+        if available_models:
+            # Add "서버 기본값" option at the top
+            model_options = [f"서버 기본값 ({default_model})"] + available_models
+            selected_model_idx = st.selectbox(
+                "LLM 모델",
+                options=range(len(model_options)),
+                format_func=lambda i: model_options[i],
+                index=0,
+                help="Ollama 서버에 설치된 모델 중 하나를 선택하세요.",
+            )
+            chatbot_llm_model = None if selected_model_idx == 0 else available_models[selected_model_idx - 1]
+        else:
+            st.info("Ollama 서버에서 모델 목록을 불러올 수 없습니다. 서버 기본 모델이 사용됩니다.")
+            chatbot_llm_model = None
+
         st.markdown('</div>', unsafe_allow_html=True)
 
         # ── Section 2: File Upload ──
@@ -623,6 +658,7 @@ def show_create_chatbot():
                             "name": chatbot_name.strip(),
                             "description": chatbot_description.strip() if chatbot_description else None,
                             "icon": chatbot_icon,
+                            "llm_model": chatbot_llm_model,
                             "system_prompt": system_prompt.strip() if system_prompt else None,
                             "temperature": temperature,
                             "top_k": top_k,
@@ -782,10 +818,12 @@ def show_chat():
                         st.error("삭제 실패")
 
     # ── Main Content: Chat + References ──
+    model_display = chatbot.get("llm_model") or settings_default_model()
     st.markdown(
         '<div class="main-header">'
         f'<h2>🏥 {chatbot["name"]}</h2>'
-        f'<span style="font-size:0.9rem;">{chatbot.get("description") or ""}</span>'
+        f'<span style="font-size:0.9rem;">{chatbot.get("description") or ""}'
+        f' &nbsp;|&nbsp; 모델: {model_display}</span>'
         "</div>",
         unsafe_allow_html=True,
     )

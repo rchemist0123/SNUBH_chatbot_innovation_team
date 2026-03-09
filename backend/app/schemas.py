@@ -35,6 +35,7 @@ class ChatbotCreate(BaseModel):
     name: str
     description: str | None = None
     icon: str = "🤖"
+    llm_model: str | None = None  # Ollama model name; None = server default
     system_prompt: str | None = None
     temperature: float = 0.7
     top_k: int = 5
@@ -50,6 +51,7 @@ class ChatbotResponse(BaseModel):
     collection_name: str
     icon: str | None = "🤖"
     creator_id: str | None = None
+    llm_model: str | None = None
     system_prompt: str | None = None
     temperature: float | None = 0.7
     top_k: int | None = 5

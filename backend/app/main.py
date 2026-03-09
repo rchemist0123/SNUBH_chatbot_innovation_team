@@ -59,6 +59,7 @@ def _migrate_chatbots_table():
         ("distance_threshold", "FLOAT", "0.4"),
         ("chunk_size", "INTEGER", "500"),
         ("chunk_overlap", "INTEGER", "100"),
+        ("llm_model", "VARCHAR(100)", "NULL"),
     ]
 
     with engine.begin() as conn:
@@ -238,6 +239,7 @@ def create_chatbot(
         collection_name=collection_name,
         icon=body.icon or "🤖",
         creator_id=current_user.id,
+        llm_model=body.llm_model,
         system_prompt=body.system_prompt,
         temperature=body.temperature,
         top_k=body.top_k,
@@ -466,6 +468,7 @@ def chat(
         temperature=chatbot.temperature,
         top_k=chatbot.top_k,
         distance_threshold=chatbot.distance_threshold,
+        llm_model=chatbot.llm_model,
     )
 
     # Save assistant message
@@ -527,6 +530,7 @@ def chat_stream_endpoint(
     chatbot_temperature = chatbot.temperature
     chatbot_top_k = chatbot.top_k
     chatbot_distance_threshold = chatbot.distance_threshold
+    chatbot_llm_model = chatbot.llm_model
 
     # Save user message before streaming starts
     user_msg = Message(
@@ -557,6 +561,7 @@ def chat_stream_endpoint(
                 temperature=chatbot_temperature,
                 top_k=chatbot_top_k,
                 distance_threshold=chatbot_distance_threshold,
+                llm_model=chatbot_llm_model,
             ):
                 if chunk["type"] == "token":
                     full_answer_parts.append(chunk["content"])
@@ -633,6 +638,28 @@ def debug_search(q: str, collection: str = settings.COLLECTION_NAME, top_k: int 
 
 
 # ──────────────────────────── Health ────────────────────────────
+
+@app.get("/api/ollama/models")
+def list_ollama_models(_: User = Depends(get_current_user)):
+    """Ollama 서버에서 사용 가능한 모델 목록을 반환합니다."""
+    import httpx
+    try:
+        resp = httpx.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=10.0)
+        resp.raise_for_status()
+        data = resp.json()
+        models = [
+            {
+                "name": m["name"],
+                "size": m.get("size", 0),
+                "modified_at": m.get("modified_at", ""),
+            }
+            for m in data.get("models", [])
+        ]
+        return {"models": models, "default": settings.LLM_MODEL}
+    except Exception as e:
+        logger.warning("Failed to fetch Ollama models: %s", e)
+        return {"models": [{"name": settings.LLM_MODEL, "size": 0, "modified_at": ""}], "default": settings.LLM_MODEL}
+
 
 @app.get("/api/health")
 def health():
