@@ -970,16 +970,28 @@ def show_chat():
             label_visibility="collapsed",
         )
 
+    def _submit_question():
+        """콜백: 입력값을 별도 키에 저장하고 위젯을 초기화한다."""
+        val = st.session_state.get("chat_question_input", "").strip()
+        if val:
+            st.session_state._submitted_question = val
+            st.session_state.chat_question_input = ""
+
     with input_col:
-        question = st.text_input(
+        st.text_input(
             "질문",
             placeholder="매뉴얼에 대해 질문해주세요...",
             key="chat_question_input",
             label_visibility="collapsed",
+            on_change=_submit_question,
         )
 
     with send_col:
         send_clicked = st.button("전송", use_container_width=True)
+
+    # 전송 버튼 클릭 시에도 콜백과 동일하게 처리
+    if send_clicked:
+        _submit_question()
 
     # Resolve the actual model value to send (None means use chatbot/server default)
     if selected_model_name and selected_model_name.startswith("기본"):
@@ -987,7 +999,8 @@ def show_chat():
     else:
         _runtime_model = selected_model_name
 
-    if (send_clicked or question) and question:
+    question = st.session_state.pop("_submitted_question", "")
+    if question:
         st.session_state.messages.append({"role": "user", "content": question})
 
         stream_meta = {}
@@ -1036,7 +1049,6 @@ def show_chat():
             st.session_state.messages.append(assistant_msg)
             st.session_state.references = stream_meta.get("references", [])
 
-        st.session_state.chat_question_input = ""
         st.rerun()
 
 
