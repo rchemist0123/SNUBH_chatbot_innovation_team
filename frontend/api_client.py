@@ -106,22 +106,28 @@ class APIClient:
 
     # ── Chat ──
 
-    def chat(self, conversation_id: str, question: str) -> dict:
+    def chat(self, conversation_id: str, question: str, llm_model: str | None = None) -> dict:
+        payload: dict = {"conversation_id": conversation_id, "question": question}
+        if llm_model:
+            payload["llm_model"] = llm_model
         resp = requests.post(
             f"{self.base_url}/api/chat",
             headers=self._headers(),
-            json={"conversation_id": conversation_id, "question": question},
+            json=payload,
             timeout=300,
         )
         resp.raise_for_status()
         return resp.json()
 
-    def chat_stream(self, conversation_id: str, question: str):
+    def chat_stream(self, conversation_id: str, question: str, llm_model: str | None = None):
         """Stream chat response via SSE. Yields dicts with type 'token', 'meta', or 'done'."""
+        payload: dict = {"conversation_id": conversation_id, "question": question}
+        if llm_model:
+            payload["llm_model"] = llm_model
         with requests.post(
             f"{self.base_url}/api/chat/stream",
             headers=self._headers(),
-            json={"conversation_id": conversation_id, "question": question},
+            json=payload,
             stream=True,
             timeout=300,
         ) as resp:

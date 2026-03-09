@@ -368,6 +368,24 @@ def init_state():
 init_state()
 
 
+def _get_chat_model_options(api, chatbot: dict) -> list[str]:
+    """Build the model dropdown options for the chat page (cached in session)."""
+    if "_chat_model_options" not in st.session_state:
+        try:
+            data = api.list_ollama_models()
+            models = [m["name"] for m in data.get("models", [])]
+            default = data.get("default", "")
+        except Exception:
+            models = []
+            default = ""
+
+        bot_model = chatbot.get("llm_model")
+        default_label = f"기본 ({bot_model or default or 'llama3'})"
+        options = [default_label] + [m for m in models if m != bot_model]
+        st.session_state["_chat_model_options"] = options
+    return st.session_state["_chat_model_options"]
+
+
 def settings_default_model() -> str:
     """Fetch the default LLM model name from the backend (cached in session)."""
     if "_default_llm_model" not in st.session_state:
@@ -990,6 +1008,27 @@ def show_chat():
                     _show_reference_dialog(i, ref)
                     break
 
+    # ── Model selector (above chat input) ──
+    _model_options = _get_chat_model_options(api, chatbot)
+    if len(_model_options) > 1:
+        sel_col1, sel_col2 = st.columns([1, 3])
+        with sel_col1:
+            selected_model_name = st.selectbox(
+                "모델 선택",
+                options=_model_options,
+                index=0,
+                key="chat_model_select",
+                label_visibility="collapsed",
+            )
+    else:
+        selected_model_name = _model_options[0] if _model_options else None
+
+    # Resolve the actual model value to send (None means use chatbot/server default)
+    if selected_model_name and selected_model_name.startswith("기본"):
+        _runtime_model = None
+    else:
+        _runtime_model = selected_model_name
+
     # Chat input at top level — Streamlit pins this to the viewport bottom
     question = st.chat_input("매뉴얼에 대해 질문해주세요...")
     if question:
@@ -1013,7 +1052,8 @@ def show_chat():
             )
             try:
                 for chunk in api.chat_stream(
-                    st.session_state.current_conversation["id"], question
+                    st.session_state.current_conversation["id"], question,
+                    llm_model=_runtime_model,
                 ):
                     if chunk["type"] == "token":
                         full_text_parts.append(chunk["content"])
