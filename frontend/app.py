@@ -208,15 +208,15 @@ st.markdown("""
         margin: 0.5rem 0 1.5rem;
     }
 
-    /* Bottom padding so fixed chat input doesn't overlap content */
+    /* Bottom padding so chat input doesn't overlap content */
     .main .block-container {
-        padding-bottom: 80px;
+        padding-bottom: 10px;
     }
 
     /* Chat & reference panels: equal viewport-responsive height */
     .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] {
-        height: calc(100vh - 340px) !important;
-        min-height: 300px !important;
+        height: calc(100vh - 380px) !important;
+        min-height: 250px !important;
     }
     .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] > div {
         height: 100% !important;
@@ -854,8 +854,8 @@ def show_chat():
     chat_col, ref_col = st.columns([3, 2])
 
     with chat_col:
-        # Chat messages
-        chat_container = st.container(height=400)
+        st.markdown("#### 💬 대화기록")
+        chat_container = st.container(height=350)
         with chat_container:
             for msg in st.session_state.messages:
                 role = msg["role"]
@@ -957,7 +957,7 @@ def show_chat():
 
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
-        ref_container = st.container(height=400)
+        ref_container = st.container(height=350)
         with ref_container:
             if st.session_state.references:
                 # Sort references by distance (ascending = most similar first)
