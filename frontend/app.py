@@ -1036,6 +1036,7 @@ def show_chat():
             st.session_state.messages.append(assistant_msg)
             st.session_state.references = stream_meta.get("references", [])
 
+        st.session_state.chat_question_input = ""
         st.rerun()
 
 
