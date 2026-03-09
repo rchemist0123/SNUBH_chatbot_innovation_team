@@ -215,8 +215,8 @@ st.markdown("""
 
     /* Chat & reference panels: equal viewport-responsive height */
     .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] {
-        height: calc(100vh - 260px) !important;
-        min-height: 400px !important;
+        height: calc(100vh - 340px) !important;
+        min-height: 300px !important;
     }
     .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] > div {
         height: 100% !important;
@@ -855,7 +855,7 @@ def show_chat():
 
     with chat_col:
         # Chat messages
-        chat_container = st.container(height=500)
+        chat_container = st.container(height=400)
         with chat_container:
             for msg in st.session_state.messages:
                 role = msg["role"]
@@ -957,7 +957,7 @@ def show_chat():
 
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
-        ref_container = st.container(height=500)
+        ref_container = st.container(height=400)
         with ref_container:
             if st.session_state.references:
                 # Sort references by distance (ascending = most similar first)
