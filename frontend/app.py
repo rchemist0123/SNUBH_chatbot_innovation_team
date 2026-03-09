@@ -208,19 +208,9 @@ st.markdown("""
         margin: 0.5rem 0 1.5rem;
     }
 
-    /* Bottom padding so chat input doesn't overlap content */
+    /* Bottom padding */
     .main .block-container {
         padding-bottom: 10px;
-    }
-
-    /* Chat & reference panels: equal viewport-responsive height */
-    .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] {
-        height: calc(100vh - 380px) !important;
-        min-height: 250px !important;
-    }
-    .stMainBlockContainer [data-testid="stColumn"] [data-testid="stVerticalBlockBorderWrapper"] > div {
-        height: 100% !important;
-        max-height: 100% !important;
     }
 
     /* Auth page: don't force viewport height on auth columns */
@@ -854,7 +844,7 @@ def show_chat():
     chat_col, ref_col = st.columns([3, 2])
 
     with chat_col:
-        st.markdown("#### 💬 대화기록")
+        st.markdown("#### 💬 대화 내용")
         chat_container = st.container(height=350)
         with chat_container:
             for msg in st.session_state.messages:
@@ -877,83 +867,6 @@ def show_chat():
                             f'<div class="token-info">토큰: {tokens} | 응답시간: {latency:.0f}ms</div>',
                             unsafe_allow_html=True,
                         )
-
-            # Auto-scroll: scroll to last question, then follow streaming response
-            components.html(
-                """
-                <script>
-                    (function() {
-                        var sc = null;
-                        try {
-                            var el = window.frameElement;
-                            while (el) {
-                                el = el.parentElement;
-                                if (el && el.scrollHeight > el.clientHeight + 10) {
-                                    var ov = getComputedStyle(el).overflowY;
-                                    if (ov !== 'visible' && ov !== 'hidden') { sc = el; break; }
-                                }
-                            }
-                        } catch(e) {}
-                        if (!sc) {
-                            try {
-                                var divs = window.parent.document.querySelectorAll('div');
-                                for (var i = 0; i < divs.length; i++) {
-                                    var d = divs[i];
-                                    if (d.clientHeight >= 300 && d.scrollHeight > d.clientHeight + 10) {
-                                        var s = getComputedStyle(d).overflowY;
-                                        if (s === 'auto' || s === 'scroll') { sc = d; break; }
-                                    }
-                                }
-                            } catch(e) {}
-                        }
-                        if (!sc) return;
-
-                        // Find user messages via parent document (more reliable than sc.querySelectorAll)
-                        function getUserMsgs() {
-                            try { return window.parent.document.querySelectorAll('.user-message-wrapper'); }
-                            catch(e) {}
-                            try { return sc.querySelectorAll('.user-message-wrapper'); }
-                            catch(e) {}
-                            return [];
-                        }
-
-                        // Scroll container so element is at the top
-                        function scrollToLastQ() {
-                            var msgs = getUserMsgs();
-                            if (msgs.length === 0) { sc.scrollTop = sc.scrollHeight; return 0; }
-                            var last = msgs[msgs.length - 1];
-                            var mR = last.getBoundingClientRect();
-                            var sR = sc.getBoundingClientRect();
-                            sc.scrollTop += (mR.top - sR.top);
-                            return msgs.length;
-                        }
-
-                        // Get initial count before scrolling
-                        var numQ = getUserMsgs().length;
-                        // Delay initial scroll slightly so Streamlit finishes rendering
-                        setTimeout(function() { scrollToLastQ(); }, 100);
-
-                        // Poll: detect new questions + auto-scroll streaming
-                        var lastH = sc.scrollHeight;
-                        setInterval(function() {
-                            var current = getUserMsgs().length;
-                            if (current > numQ) {
-                                numQ = current;
-                                scrollToLastQ();
-                                lastH = sc.scrollHeight;
-                                return;
-                            }
-                            var h = sc.scrollHeight;
-                            if (h !== lastH) {
-                                sc.scrollTop = h;
-                                lastH = h;
-                            }
-                        }, 80);
-                    })();
-                </script>
-                """,
-                height=0,
-            )
 
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
