@@ -105,6 +105,7 @@ class ConversationWithMessages(ConversationResponse):
 class ChatRequest(BaseModel):
     conversation_id: str
     question: str
+    llm_model: str | None = None  # 런타임 모델 오버라이드; None이면 챗봇 설정 사용
 
 
 class ReferenceInfo(BaseModel):

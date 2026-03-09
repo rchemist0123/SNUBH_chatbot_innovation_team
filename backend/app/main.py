@@ -468,7 +468,7 @@ def chat(
         temperature=chatbot.temperature,
         top_k=chatbot.top_k,
         distance_threshold=chatbot.distance_threshold,
-        llm_model=chatbot.llm_model,
+        llm_model=body.llm_model or chatbot.llm_model,
     )
 
     # Save assistant message
@@ -530,7 +530,7 @@ def chat_stream_endpoint(
     chatbot_temperature = chatbot.temperature
     chatbot_top_k = chatbot.top_k
     chatbot_distance_threshold = chatbot.distance_threshold
-    chatbot_llm_model = chatbot.llm_model
+    chatbot_llm_model = body.llm_model or chatbot.llm_model
 
     # Save user message before streaming starts
     user_msg = Message(
