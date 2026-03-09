@@ -845,7 +845,7 @@ def show_chat():
 
     with chat_col:
         st.markdown("#### 💬 대화 내용")
-        chat_container = st.container(height=350)
+        chat_container = st.container(height=480)
         with chat_container:
             for msg in st.session_state.messages:
                 role = msg["role"]
@@ -868,9 +868,44 @@ def show_chat():
                             unsafe_allow_html=True,
                         )
 
+            # Auto-scroll within chat container during streaming
+            components.html(
+                """
+                <script>
+                    (function() {
+                        var sc = null;
+                        try {
+                            var el = window.frameElement;
+                            while (el) {
+                                el = el.parentElement;
+                                if (el && el.scrollHeight > el.clientHeight + 10) {
+                                    var ov = getComputedStyle(el).overflowY;
+                                    if (ov === 'auto' || ov === 'scroll') { sc = el; break; }
+                                }
+                            }
+                        } catch(e) {}
+                        if (!sc) return;
+                        // Keep scrolled to bottom as new content streams in
+                        sc.scrollTop = sc.scrollHeight;
+                        var lastH = sc.scrollHeight;
+                        var poll = setInterval(function() {
+                            var h = sc.scrollHeight;
+                            if (h !== lastH) {
+                                sc.scrollTop = h;
+                                lastH = h;
+                            }
+                        }, 100);
+                        // Stop polling after 5 minutes
+                        setTimeout(function() { clearInterval(poll); }, 300000);
+                    })();
+                </script>
+                """,
+                height=0,
+            )
+
     with ref_col:
         st.markdown("#### 📖 참고 문서 (References)")
-        ref_container = st.container(height=350)
+        ref_container = st.container(height=480)
         with ref_container:
             if st.session_state.references:
                 # Sort references by distance (ascending = most similar first)
