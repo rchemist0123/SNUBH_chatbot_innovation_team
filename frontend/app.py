@@ -1008,20 +1008,30 @@ def show_chat():
                     _show_reference_dialog(i, ref)
                     break
 
-    # ── Model selector (above chat input) ──
+    # ── Model selector + chat input on the same row ──
     _model_options = _get_chat_model_options(api, chatbot)
-    if len(_model_options) > 1:
-        sel_col1, sel_col2 = st.columns([1, 3])
-        with sel_col1:
-            selected_model_name = st.selectbox(
-                "모델 선택",
-                options=_model_options,
-                index=0,
-                key="chat_model_select",
-                label_visibility="collapsed",
-            )
-    else:
-        selected_model_name = _model_options[0] if _model_options else None
+
+    model_col, input_col, send_col = st.columns([1.5, 5, 0.6])
+
+    with model_col:
+        selected_model_name = st.selectbox(
+            "모델 선택",
+            options=_model_options,
+            index=0,
+            key="chat_model_select",
+            label_visibility="collapsed",
+        )
+
+    with input_col:
+        question = st.text_input(
+            "질문",
+            placeholder="매뉴얼에 대해 질문해주세요...",
+            key="chat_question_input",
+            label_visibility="collapsed",
+        )
+
+    with send_col:
+        send_clicked = st.button("전송", use_container_width=True)
 
     # Resolve the actual model value to send (None means use chatbot/server default)
     if selected_model_name and selected_model_name.startswith("기본"):
@@ -1029,9 +1039,7 @@ def show_chat():
     else:
         _runtime_model = selected_model_name
 
-    # Chat input at top level — Streamlit pins this to the viewport bottom
-    question = st.chat_input("매뉴얼에 대해 질문해주세요...")
-    if question:
+    if (send_clicked or question) and question:
         st.session_state.messages.append({"role": "user", "content": question})
 
         stream_meta = {}
